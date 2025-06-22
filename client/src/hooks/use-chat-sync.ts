@@ -28,8 +28,10 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
 
   const connect = useCallback(() => {
     try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}?token=${Date.now()}`;
+      // Environment variable'dan al veya mevcut origin'i kullan
+      const wsUrl = import.meta.env.VITE_SERVER_URL 
+        ? `${import.meta.env.VITE_SERVER_URL.replace('https://', 'wss://').replace('http://', 'ws://')}/ws?token=${Date.now()}`
+        : `${window.location.origin.replace('https://', 'wss://').replace('http://', 'ws://')}/ws?token=${Date.now()}`;
       
       wsRef.current = new WebSocket(wsUrl);
 

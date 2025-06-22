@@ -23,8 +23,8 @@ export function useSoundSync({ roomId, userId, onPlaySound, onStopSound }: UseSo
 
     // Environment variable'dan al veya mevcut origin'i kullan
     const wsUrl = import.meta.env.VITE_SERVER_URL 
-      ? `${import.meta.env.VITE_SERVER_URL.replace('https://', 'wss://').replace('http://', 'ws://')}/ws`
-      : `${window.location.origin.replace('https://', 'wss://').replace('http://', 'ws://')}/ws`;
+      ? `${import.meta.env.VITE_SERVER_URL.replace('https://', 'wss://').replace('http://', 'ws://')}/ws?token=${Date.now()}`
+      : `${window.location.origin.replace('https://', 'wss://').replace('http://', 'ws://')}/ws?token=${Date.now()}`;
     
     try {
       wsRef.current = new WebSocket(wsUrl);
