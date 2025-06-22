@@ -6,7 +6,7 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 export default defineConfig({
   plugins: [
     react(),
-    runtimeErrorOverlay(),
+    ...(process.env.NODE_ENV !== "production" ? [runtimeErrorOverlay()] : []),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [
@@ -30,8 +30,8 @@ export default defineConfig({
     minify: 'terser',
     terserOptions: {
       compress: {
-        drop_console: true,
-        drop_debugger: true,
+        drop_console: process.env.NODE_ENV === "production",
+        drop_debugger: process.env.NODE_ENV === "production",
       },
     },
     rollupOptions: {
@@ -65,6 +65,6 @@ export default defineConfig({
     ],
   },
   css: {
-    devSourcemap: true,
+    devSourcemap: process.env.NODE_ENV !== "production",
   },
 });
