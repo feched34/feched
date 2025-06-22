@@ -7,7 +7,24 @@ const app = express();
 
 // CORS middleware for production
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  
+  // Ýzin verilen domain'ler
+  const allowedOrigins = [
+    'https://feched.onrender.com',
+    'https://your-app-name.onrender.com',
+    'http://localhost:3000',
+    'http://localhost:5050',
+    'http://localhost:5173' // Vite dev server
+  ];
+  
+  // Eðer origin varsa ve izin verilen listedeyse
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  // Credentials için gerekli
+  res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   
