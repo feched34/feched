@@ -7,31 +7,9 @@ const app = express();
 
 // CORS middleware for production
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  
-  // İzin verilen domain'ler
-  const allowedOrigins = [
-    'https://feched.onrender.com',
-    'https://voicecommunity.onrender.com',
-    'http://localhost:3000',
-    'http://localhost:5050',
-    'http://localhost:5173', // Vite dev server
-    'http://127.0.0.1:5050',
-    'http://127.0.0.1:5173'
-  ];
-  
-  // Eğer origin varsa ve izin verilen listedeyse
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-  } else if (!origin) {
-    // Origin yoksa (Postman gibi araçlar için)
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-  
-  // Credentials için gerekli
-  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);

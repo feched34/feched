@@ -3,11 +3,13 @@ services:
     name: voicecommunity
     env: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 10000
       - key: DATABASE_URL
         sync: false
       - key: LIVEKIT_API_KEY
@@ -16,5 +18,7 @@ services:
         sync: false
       - key: LIVEKIT_WS_URL
         sync: false
-      - key: YOUTUBE_API_KEY
+      - key: VITE_YOUTUBE_API_KEY
+        sync: false
+      - key: VITE_SERVER_URL
         sync: false 
