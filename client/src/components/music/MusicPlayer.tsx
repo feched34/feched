@@ -114,20 +114,20 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
     },
     onStateUpdate: (state) => {
       console.log('Received music state update:', state);
-      // State'i güncelle
-      if (state.queue) {
+      // State'i güncelle - sadece gerçekten değişiklik varsa
+      if (state.queue && JSON.stringify(state.queue) !== JSON.stringify(queue)) {
         setQueue(state.queue);
       }
-      if (state.currentSong) {
+      if (state.currentSong && (!currentSong || state.currentSong.id !== currentSong.id)) {
         setCurrentSong(state.currentSong);
       }
-      if (state.isPlaying !== undefined) {
+      if (state.isPlaying !== undefined && state.isPlaying !== isPlaying) {
         setIsPlaying(state.isPlaying);
       }
-      if (state.repeatMode) {
+      if (state.repeatMode && state.repeatMode !== repeatMode) {
         setRepeatMode(state.repeatMode);
       }
-      if (state.isShuffled !== undefined) {
+      if (state.isShuffled !== undefined && state.isShuffled !== isShuffled) {
         setIsShuffled(state.isShuffled);
       }
     }
@@ -195,9 +195,22 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
   useEffect(() => {
     if (ytPlayer.current && isReady && currentSong) {
       console.log('Loading video:', currentSong.video_id);
-      ytPlayer.current.loadVideoById(currentSong.video_id);
+      // Eğer aynı video zaten yüklüyse sadece oynat
+      try {
+        const currentVideoId = ytPlayer.current.getVideoData()?.video_id;
+        if (currentVideoId === currentSong.video_id) {
+          if (isPlaying) {
+            ytPlayer.current.playVideo();
+          }
+        } else {
+          ytPlayer.current.loadVideoById(currentSong.video_id);
+        }
+      } catch (error) {
+        console.error('Error checking current video:', error);
+        ytPlayer.current.loadVideoById(currentSong.video_id);
+      }
     }
-  }, [currentSong, isReady]);
+  }, [currentSong?.video_id, isReady]); // Sadece video_id değişince tetikle
 
   // Ses değişince uygula - debounce ile optimize et
   useEffect(() => {
@@ -373,7 +386,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
     // Senkronizasyon için kuyruk ekleme komutu gönder
     if (roomId && userId) {
       sendAddToQueueCommand(song);
-      // State güncellemesi gönder
+      // State güncellemesi gönder - sadece önemli değişikliklerde
       sendStateUpdate({
         queue: newQueue,
         currentSong: currentSong || song,
@@ -399,7 +412,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       setCurrentSong(newCurrentSong);
     }
 
-    // State güncellemesi gönder
+    // State güncellemesi gönder - sadece önemli değişikliklerde
     if (roomId && userId) {
       sendStateUpdate({
         queue: newQueue,

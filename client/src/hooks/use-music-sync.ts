@@ -24,9 +24,14 @@ interface UseMusicSyncOptions {
 
 export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate }: UseMusicSyncOptions) {
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastStateUpdateRef = useRef<number>(0);
+  const isConnectingRef = useRef<boolean>(false);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || isConnectingRef.current) return;
+
+    isConnectingRef.current = true;
 
     // Environment variable'dan al veya mevcut origin'i kullan
     const wsUrl = import.meta.env.VITE_SERVER_URL 
@@ -38,6 +43,8 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
 
       wsRef.current.onopen = () => {
         console.log('Music sync WebSocket connected');
+        isConnectingRef.current = false;
+        
         // WebSocket'in hazır olduğundan emin ol
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           // Odaya katıl
@@ -100,19 +107,28 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
 
       wsRef.current.onerror = (error) => {
         console.error('Music sync WebSocket error:', error);
+        isConnectingRef.current = false;
       };
 
-      wsRef.current.onclose = () => {
-        console.log('Music sync WebSocket disconnected');
-        // Yeniden bağlanma denemesi - sadece manuel kapatma değilse
-        setTimeout(() => {
-          if (wsRef.current?.readyState !== WebSocket.OPEN && wsRef.current?.readyState !== WebSocket.CONNECTING) {
-            connect();
+      wsRef.current.onclose = (event) => {
+        console.log('Music sync WebSocket disconnected, code:', event.code);
+        isConnectingRef.current = false;
+        
+        // Yeniden bağlanma denemesi - sadece manuel kapatma değilse ve zaten bağlanmaya çalışmıyorsa
+        if (event.code !== 1000 && !isConnectingRef.current) {
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
           }
-        }, 3000);
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (wsRef.current?.readyState !== WebSocket.OPEN && wsRef.current?.readyState !== WebSocket.CONNECTING) {
+              connect();
+            }
+          }, 5000); // 5 saniye bekle
+        }
       };
     } catch (error) {
       console.error('Error creating WebSocket connection:', error);
+      isConnectingRef.current = false;
     }
   }, [roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate]);
 
@@ -156,10 +172,17 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     }
   }, [roomId, userId]);
 
-  // State güncellemesi gönderme fonksiyonu
+  // State güncellemesi gönderme fonksiyonu - throttled
   const sendStateUpdate = useCallback((state: any) => {
+    const now = Date.now();
+    // Son state güncellemesinden en az 2 saniye geçmişse gönder
+    if (now - lastStateUpdateRef.current < 2000) {
+      return;
+    }
+    
     try {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
+        lastStateUpdateRef.current = now;
         wsRef.current.send(JSON.stringify({
           type: 'music_state_update',
           roomId,
@@ -175,8 +198,11 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     connect();
     
     return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       if (wsRef.current) {
-        wsRef.current.close();
+        wsRef.current.close(1000); // Normal kapatma
       }
     };
   }, [connect]);
