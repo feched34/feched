@@ -68,26 +68,34 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
   const ytPlayer = useRef<any>(null);
 
   // Müzik senkronizasyonu
-  const { sendPlayCommand, sendPauseCommand, sendAddToQueueCommand, sendShuffleCommand, sendRepeatCommand, sendStateUpdate } = useMusicSync({
+  const { sendPlayCommand, sendPauseCommand, sendAddToQueueCommand, sendShuffleCommand, sendRepeatCommand, sendStateUpdate, sendVideoStateUpdate } = useMusicSync({
     roomId: roomId || 'default-room',
     userId: userId || 'anonymous',
-    onPlay: (videoId, userId) => {
-      console.log(`Remote play command from ${userId}:`, videoId);
+    onPlay: (videoId, userId, currentTime) => {
+      console.log(`🎬 Remote play command from ${userId}:`, videoId, 'at time:', currentTime);
       // Remote play komutunu işle
       const song = queue.find(s => s.video_id === videoId);
       if (song) {
         setCurrentSong(song);
         setIsPlaying(true);
         if (ytPlayer.current && isReady) {
+          // Video'yu belirtilen zamana ayarla ve oynat
+          if (currentTime && currentTime > 0) {
+            ytPlayer.current.seekTo(currentTime, true);
+          }
           ytPlayer.current.playVideo();
         }
       }
     },
-    onPause: (userId) => {
-      console.log(`Remote pause command from ${userId}`);
+    onPause: (userId, currentTime) => {
+      console.log(`🎬 Remote pause command from ${userId} at time:`, currentTime);
       setIsPlaying(false);
       if (ytPlayer.current && isReady) {
         ytPlayer.current.pauseVideo();
+        // Video'yu belirtilen zamana ayarla
+        if (currentTime && currentTime > 0) {
+          ytPlayer.current.seekTo(currentTime, true);
+        }
       }
     },
     onAddToQueue: (song, userId) => {
@@ -130,6 +138,40 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       if (state.isShuffled !== undefined && state.isShuffled !== isShuffled) {
         setIsShuffled(state.isShuffled);
       }
+    },
+    onVideoStateUpdate: (videoState) => {
+      console.log('🎬 Received video state update:', videoState);
+      
+      // Video state'ini zorla güncelle
+      if (videoState.currentVideoId && videoState.currentVideoId !== currentSong?.video_id) {
+        const song = queue.find(s => s.video_id === videoState.currentVideoId);
+        if (song) {
+          setCurrentSong(song);
+        }
+      }
+      
+      // Video durumunu zorla güncelle
+      if (ytPlayer.current && isReady) {
+        if (videoState.isPlaying) {
+          ytPlayer.current.playVideo();
+          setIsPlaying(true);
+        } else {
+          ytPlayer.current.pauseVideo();
+          setIsPlaying(false);
+        }
+        
+        // Video zamanını senkronize et
+        if (videoState.currentTime > 0) {
+          const currentPlayerTime = ytPlayer.current.getCurrentTime();
+          const timeDifference = Math.abs(currentPlayerTime - videoState.currentTime);
+          
+          // Eğer zaman farkı 2 saniyeden fazlaysa senkronize et
+          if (timeDifference > 2) {
+            console.log(`🎬 Syncing video time from ${currentPlayerTime} to ${videoState.currentTime}`);
+            ytPlayer.current.seekTo(videoState.currentTime, true);
+          }
+        }
+      }
     }
   });
 
@@ -166,8 +208,34 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
           onStateChange: (e: any) => {
             console.log('YouTube player state changed:', e.data);
             if (e.data === YT.PlayerState.ENDED) handleSongEnd();
-            if (e.data === YT.PlayerState.PLAYING) setIsPlaying(true);
-            if (e.data === YT.PlayerState.PAUSED) setIsPlaying(false);
+            if (e.data === YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+              // Video state güncellemesi gönder
+              if (roomId && userId && currentSong && ytPlayer.current) {
+                const currentTime = ytPlayer.current.getCurrentTime();
+                sendVideoStateUpdate({
+                  isPlaying: true,
+                  currentVideoId: currentSong.video_id,
+                  currentTime,
+                  duration: ytPlayer.current.getDuration() || 0,
+                  lastUpdate: Date.now()
+                });
+              }
+            }
+            if (e.data === YT.PlayerState.PAUSED) {
+              setIsPlaying(false);
+              // Video state güncellemesi gönder
+              if (roomId && userId && currentSong && ytPlayer.current) {
+                const currentTime = ytPlayer.current.getCurrentTime();
+                sendVideoStateUpdate({
+                  isPlaying: false,
+                  currentVideoId: currentSong.video_id,
+                  currentTime,
+                  duration: ytPlayer.current.getDuration() || 0,
+                  lastUpdate: Date.now()
+                });
+              }
+            }
             if (e.data === YT.PlayerState.BUFFERING) { /* do nothing */ }
           },
           onError: (e: any) => {
@@ -282,14 +350,24 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
     
     try {
       const newIsPlaying = !isPlaying;
+      const currentTime = ytPlayer.current.getCurrentTime();
+      
       setIsPlaying(newIsPlaying);
       
       if (isPlaying) {
-        console.log('Pausing video');
+        console.log('🎬 Pausing video at time:', currentTime);
         ytPlayer.current.pauseVideo();
         // Senkronizasyon için pause komutu gönder
         if (roomId && userId) {
-          sendPauseCommand();
+          sendPauseCommand(currentTime);
+          // Video state güncellemesi gönder
+          sendVideoStateUpdate({
+            isPlaying: false,
+            currentVideoId: currentSong.video_id,
+            currentTime,
+            duration: ytPlayer.current.getDuration() || 0,
+            lastUpdate: Date.now()
+          });
           // State güncellemesi gönder
           sendStateUpdate({
             queue,
@@ -300,11 +378,19 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
           });
         }
       } else {
-        console.log('Playing video');
+        console.log('🎬 Playing video at time:', currentTime);
         ytPlayer.current.playVideo();
         // Senkronizasyon için play komutu gönder
         if (roomId && userId && currentSong) {
-          sendPlayCommand(currentSong.video_id);
+          sendPlayCommand(currentSong.video_id, currentTime);
+          // Video state güncellemesi gönder
+          sendVideoStateUpdate({
+            isPlaying: true,
+            currentVideoId: currentSong.video_id,
+            currentTime,
+            duration: ytPlayer.current.getDuration() || 0,
+            lastUpdate: Date.now()
+          });
           // State güncellemesi gönder
           sendStateUpdate({
             queue,
@@ -318,7 +404,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
     } catch (error: any) {
       console.error('Error toggling play/pause:', error);
     }
-  }, [currentSong, isReady, isPlaying, roomId, userId, sendPlayCommand, sendPauseCommand, sendStateUpdate, queue, repeatMode, isShuffled]);
+  }, [currentSong, isReady, isPlaying, roomId, userId, sendPlayCommand, sendPauseCommand, sendStateUpdate, sendVideoStateUpdate, queue, repeatMode, isShuffled]);
 
   // Kuyrukta ileri/geri - useCallback ile optimize et
   const nextSong = useCallback(() => {

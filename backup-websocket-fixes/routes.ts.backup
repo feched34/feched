@@ -11,24 +11,11 @@ import fs from "fs";
 interface ExtendedWebSocket extends WebSocket {
   roomId?: string;
   isAlive?: boolean;
-  lastPing?: number;
-  reconnectAttempts?: number;
 }
 
 // Oda bazlı soundboard state'ini memory'de tutmak için
 type SoundboardState = { sounds: any[] };
-
-// Video state'ini daha detaylı tutmak için
-type VideoState = {
-  isPlaying: boolean;
-  currentVideoId: string | null;
-  currentTime: number;
-  duration: number;
-  lastUpdate: number;
-};
-
 const roomSoundboardState: Record<string, SoundboardState> = {};
-const roomVideoState: Record<string, VideoState> = {};
 
 // Multer konfigürasyonu
 const storageConfig = multer.diskStorage({
@@ -331,7 +318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Müzik kontrol endpoint'leri
   app.post("/api/music/play", async (req, res) => {
     try {
-      const { roomId, videoId, userId, currentTime = 0 } = req.body;
+      const { roomId, videoId, userId } = req.body;
       
       if (!roomId || !videoId || !userId) {
         return res.status(400).json({ message: "Room ID, video ID and user ID are required" });
@@ -339,31 +326,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`🎵 Play command from ${userId} for video ${videoId} in room ${roomId}`);
 
-      // Video state'ini güncelle
-      if (!roomVideoState[roomId]) {
-        roomVideoState[roomId] = {
-          isPlaying: false,
-          currentVideoId: null,
-          currentTime: 0,
-          duration: 0,
-          lastUpdate: Date.now()
-        };
-      }
-      
-      roomVideoState[roomId].isPlaying = true;
-      roomVideoState[roomId].currentVideoId = videoId;
-      roomVideoState[roomId].currentTime = currentTime;
-      roomVideoState[roomId].lastUpdate = Date.now();
-
-      // WebSocket ile video state'ini yayınla
-      broadcastVideoState(roomId, roomVideoState[roomId]);
-
       // WebSocket ile müzik çalma komutunu yayınla
       broadcastMusicControl(roomId, {
         type: 'play',
         videoId,
         userId,
-        currentTime,
         timestamp: Date.now()
       });
 
@@ -383,7 +350,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/music/pause", async (req, res) => {
     try {
-      const { roomId, userId, currentTime = 0 } = req.body;
+      const { roomId, userId } = req.body;
       
       if (!roomId || !userId) {
         return res.status(400).json({ message: "Room ID and user ID are required" });
@@ -391,21 +358,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`🎵 Pause command from ${userId} in room ${roomId}`);
 
-      // Video state'ini güncelle
-      if (roomVideoState[roomId]) {
-        roomVideoState[roomId].isPlaying = false;
-        roomVideoState[roomId].currentTime = currentTime;
-        roomVideoState[roomId].lastUpdate = Date.now();
-
-        // WebSocket ile video state'ini yayınla
-        broadcastVideoState(roomId, roomVideoState[roomId]);
-      }
-
       // WebSocket ile müzik duraklatma komutunu yayınla
       broadcastMusicControl(roomId, {
         type: 'pause',
         userId,
-        currentTime,
         timestamp: Date.now()
       });
 
@@ -537,44 +493,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Video state güncelleme endpoint'i
-  app.post("/api/video/state", async (req, res) => {
-    try {
-      const { roomId, userId, isPlaying, currentTime, duration, videoId } = req.body;
-      
-      if (!roomId || !userId) {
-        return res.status(400).json({ message: "Room ID and user ID are required" });
-      }
-
-      console.log(`🎬 Video state update from ${userId} in room ${roomId}:`, { isPlaying, currentTime, duration, videoId });
-
-      // Video state'ini güncelle
-      if (!roomVideoState[roomId]) {
-        roomVideoState[roomId] = {
-          isPlaying: false,
-          currentVideoId: null,
-          currentTime: 0,
-          duration: 0,
-          lastUpdate: Date.now()
-        };
-      }
-      
-      roomVideoState[roomId].isPlaying = isPlaying;
-      roomVideoState[roomId].currentTime = currentTime || 0;
-      roomVideoState[roomId].duration = duration || 0;
-      roomVideoState[roomId].currentVideoId = videoId;
-      roomVideoState[roomId].lastUpdate = Date.now();
-
-      // WebSocket ile video state'ini yayınla
-      broadcastVideoState(roomId, roomVideoState[roomId]);
-
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Video state update error:", error);
-      res.status(500).json({ message: "Failed to update video state" });
-    }
-  });
-
   // WebSocket connection handling
   wss.on('connection', (ws: ExtendedWebSocket, request) => {
     console.log('🎯 WebSocket client connected');
@@ -593,12 +511,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Heartbeat için ping-pong mekanizması
     ws.isAlive = true;
-    ws.lastPing = Date.now();
-    ws.reconnectAttempts = 0;
-    
     ws.on('pong', () => {
       ws.isAlive = true;
-      ws.lastPing = Date.now();
     });
 
     // Render.com için özel error handling
@@ -616,14 +530,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Heartbeat mesajı
         if (data.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+          ws.send(JSON.stringify({ type: 'pong' }));
           return;
         }
         
         if (data.type === 'join_room') {
           ws.roomId = data.roomId;
-          console.log('🎯 Client joined room via message:', data.roomId);
-          
           // Odaya yeni katılan kullanıcıya mevcut müzik state'ini gönder
           if (roomMusicState[data.roomId]) {
             ws.send(JSON.stringify({
@@ -631,15 +543,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               state: roomMusicState[data.roomId]
             }));
           }
-          
-          // Odaya yeni katılan kullanıcıya mevcut video state'ini gönder
-          if (roomVideoState[data.roomId]) {
-            ws.send(JSON.stringify({
-              type: 'video_state_broadcast',
-              state: roomVideoState[data.roomId]
-            }));
-          }
-          
           // Odaya yeni katılan kullanıcıya mevcut soundboard state'ini gönder
           if (roomSoundboardState[data.roomId]) {
             ws.send(JSON.stringify({
@@ -648,28 +551,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }));
           }
         }
-        
-        // Video state güncellemesi
-        if (data.type === 'video_state_update' && ws.roomId) {
-          console.log('🎬 Received video state update:', data.state);
-          const roomId = ws.roomId;
-          roomVideoState[roomId] = {
-            ...data.state,
-            lastUpdate: Date.now()
-          };
-          
-          // Diğer kullanıcılara video state'ini yayınla
-          wss.clients.forEach((client: ExtendedWebSocket) => {
-            if (client.readyState === WebSocket.OPEN && client.roomId === roomId && client !== ws) {
-              client.send(JSON.stringify({
-                type: 'video_state_broadcast',
-                state: roomVideoState[roomId],
-                timestamp: Date.now()
-              }));
-            }
-          });
-        }
-        
         // Müzik state güncellemesi
         if (data.type === 'music_state_update' && ws.roomId) {
           roomMusicState[ws.roomId] = data.state;
@@ -682,7 +563,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           });
         }
-        
         // Soundboard state güncellemesi
         if (data.type === 'soundboard_state_update' && ws.roomId) {
           roomSoundboardState[ws.roomId] = data.state;
@@ -695,7 +575,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           });
         }
-        
         // Soundboard: sesi odadaki herkese çaldır
         if (data.type === 'play_sound' && ws.roomId && data.soundId) {
           wss.clients.forEach((client: ExtendedWebSocket) => {
@@ -707,7 +586,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           });
         }
-        
         // Sohbet mesajı gönderme
         if (data.type === 'chat_message' && ws.roomId && data.message) {
           const chatMessage = {
@@ -810,44 +688,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
       }
     });
-  }
-
-  // Video state broadcast fonksiyonu
-  function broadcastVideoState(roomId: string, videoState: VideoState) {
-    console.log(`🎬 Broadcasting video state to room ${roomId}:`, videoState);
-    
-    let clientCount = 0;
-    wss.clients.forEach((client: ExtendedWebSocket) => {
-      if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
-        clientCount++;
-        client.send(JSON.stringify({
-          type: 'video_state_broadcast',
-          state: videoState,
-          timestamp: Date.now()
-        }));
-      }
-    });
-    
-    console.log(`🎬 Video state broadcasted to ${clientCount} clients in room ${roomId}`);
-  }
-
-  // Video control broadcast fonksiyonu
-  function broadcastVideoControl(roomId: string, control: any) {
-    console.log(`🎬 Broadcasting video control to room ${roomId}:`, control);
-    
-    let clientCount = 0;
-    wss.clients.forEach((client: ExtendedWebSocket) => {
-      if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
-        clientCount++;
-        client.send(JSON.stringify({
-          type: 'video_control',
-          ...control,
-          timestamp: Date.now()
-        }));
-      }
-    });
-    
-    console.log(`🎬 Video control broadcasted to ${clientCount} clients in room ${roomId}`);
   }
 
   return httpServer;

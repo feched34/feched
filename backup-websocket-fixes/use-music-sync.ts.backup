@@ -9,30 +9,20 @@ interface MusicControlMessage {
   song?: any;
   isShuffled?: boolean;
   repeatMode?: string;
-  currentTime?: number;
-}
-
-interface VideoState {
-  isPlaying: boolean;
-  currentVideoId: string | null;
-  currentTime: number;
-  duration: number;
-  lastUpdate: number;
 }
 
 interface UseMusicSyncOptions {
   roomId: string;
   userId: string;
-  onPlay?: (videoId: string, userId: string, currentTime?: number) => void;
-  onPause?: (userId: string, currentTime?: number) => void;
+  onPlay?: (videoId: string, userId: string) => void;
+  onPause?: (userId: string) => void;
   onAddToQueue?: (song: any, userId: string) => void;
   onShuffle?: (isShuffled: boolean, userId: string) => void;
   onRepeat?: (repeatMode: string, userId: string) => void;
   onStateUpdate?: (state: any) => void;
-  onVideoStateUpdate?: (videoState: VideoState) => void;
 }
 
-export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate, onVideoStateUpdate }: UseMusicSyncOptions) {
+export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate }: UseMusicSyncOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastStateUpdateRef = useRef<number>(0);
@@ -114,13 +104,6 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
             return;
           }
           
-          // Video state broadcast mesajını dinle
-          if (data.type === 'video_state_broadcast' && onVideoStateUpdate) {
-            console.log('🎬 Received video state broadcast:', data.state);
-            onVideoStateUpdate(data.state);
-            return;
-          }
-          
           // Müzik state broadcast mesajını dinle
           if (data.type === 'music_state_broadcast' && onStateUpdate) {
             console.log('Received music state broadcast:', data.state);
@@ -139,12 +122,12 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
             switch (message.type) {
               case 'play':
                 if (message.videoId && onPlay) {
-                  onPlay(message.videoId, message.userId, message.currentTime);
+                  onPlay(message.videoId, message.userId);
                 }
                 break;
               case 'pause':
                 if (onPause) {
-                  onPause(message.userId, message.currentTime);
+                  onPause(message.userId);
                 }
                 break;
               case 'add_to_queue':
@@ -207,19 +190,19 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
       console.error('Error creating WebSocket connection:', error);
       isConnectingRef.current = false;
     }
-  }, [roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate, onVideoStateUpdate]);
+  }, [roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate]);
 
-  const sendPlayCommand = useCallback(async (videoId: string, currentTime: number = 0) => {
+  const sendPlayCommand = useCallback(async (videoId: string) => {
     try {
-      await apiRequest('POST', '/api/music/play', { roomId, videoId, userId, currentTime });
+      await apiRequest('POST', '/api/music/play', { roomId, videoId, userId });
     } catch (error) {
       console.error('Error sending play command:', error);
     }
   }, [roomId, userId]);
 
-  const sendPauseCommand = useCallback(async (currentTime: number = 0) => {
+  const sendPauseCommand = useCallback(async () => {
     try {
-      await apiRequest('POST', '/api/music/pause', { roomId, userId, currentTime });
+      await apiRequest('POST', '/api/music/pause', { roomId, userId });
     } catch (error) {
       console.error('Error sending pause command:', error);
     }
@@ -271,21 +254,6 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     }
   }, [roomId]);
 
-  const sendVideoStateUpdate = useCallback(async (videoState: VideoState) => {
-    try {
-      await apiRequest('POST', '/api/video/state', {
-        roomId,
-        userId,
-        isPlaying: videoState.isPlaying,
-        currentTime: videoState.currentTime,
-        duration: videoState.duration,
-        videoId: videoState.currentVideoId
-      });
-    } catch (error) {
-      console.error('Error sending video state update:', error);
-    }
-  }, [roomId, userId]);
-
   useEffect(() => {
     connect();
     
@@ -308,7 +276,6 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     sendAddToQueueCommand,
     sendShuffleCommand,
     sendRepeatCommand,
-    sendStateUpdate,
-    sendVideoStateUpdate
+    sendStateUpdate
   };
 } 
