@@ -598,6 +598,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "User ID, user name and content are required" });
       }
 
+      console.log('💬 Received chat message from:', userName, 'in room:', roomId);
+
       const message = await storage.createChatMessage({
         roomId,
         userId,
@@ -608,7 +610,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mediaUrl
       });
 
-      // WebSocket ile mesajı yayınla
+      // SSE ile mesajı yayınla
       const chatMessage = {
         id: 'm' + message.id,
         user: {
@@ -621,15 +623,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: message.messageType as 'text' | 'image' | 'video',
         mediaUrl: message.mediaUrl
       };
-
-      wss.clients.forEach((client: ExtendedWebSocket) => {
-        if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
-          client.send(JSON.stringify({
-            type: 'chat_message',
-            message: chatMessage
-          }));
-        }
+      
+      // SSE ile broadcast et
+      broadcastToSSE(roomId, {
+        type: 'chat_message',
+        message: chatMessage
       });
+      
+      console.log('💬 Broadcasted chat message to SSE clients in room:', roomId);
 
       res.json({ success: true, message });
     } catch (error) {
@@ -650,6 +651,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to delete chat messages" });
     }
   });
+
+  // Server-Sent Events endpoint for chat messages
+  app.get('/api/chat/:roomId/events', (req, res) => {
+    const { roomId } = req.params;
+    const { userId } = req.query;
+    
+    console.log('📡 SSE connection request for room:', roomId, 'user:', userId);
+    
+    // SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+    
+    // Send initial connection message
+    res.write(`data: ${JSON.stringify({ type: 'connected', roomId, userId })}\n\n`);
+    
+    // Store the response object for broadcasting
+    const clientId = `${roomId}-${userId}-${Date.now()}`;
+    if (!sseClients[roomId]) {
+      sseClients[roomId] = new Map();
+    }
+    sseClients[roomId].set(clientId, res);
+    
+    console.log('📡 SSE client connected:', clientId, 'Total clients in room:', sseClients[roomId].size);
+    
+    // Send existing messages
+    storage.getChatMessagesByRoom(roomId, 50).then(messages => {
+      if (messages.length > 0) {
+        const formattedMessages = messages.map(msg => ({
+          id: 'm' + msg.id,
+          user: {
+            id: msg.userId,
+            name: msg.userName,
+            avatar: msg.userAvatar || '/logo.png'
+          },
+          content: msg.content,
+          time: new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: msg.messageType as 'text' | 'image' | 'video',
+          mediaUrl: msg.mediaUrl
+        }));
+        
+        res.write(`data: ${JSON.stringify({ type: 'chat_history', messages: formattedMessages })}\n\n`);
+      }
+    }).catch(error => {
+      console.error('Error fetching chat history for SSE:', error);
+    });
+    
+    // Handle client disconnect
+    req.on('close', () => {
+      console.log('📡 SSE client disconnected:', clientId);
+      if (sseClients[roomId]) {
+        sseClients[roomId].delete(clientId);
+        if (sseClients[roomId].size === 0) {
+          delete sseClients[roomId];
+        }
+      }
+    });
+    
+    // Keep connection alive
+    const keepAlive = setInterval(() => {
+      if (res.writableEnded) {
+        clearInterval(keepAlive);
+        return;
+      }
+      res.write(`data: ${JSON.stringify({ type: 'ping', timestamp: Date.now() })}\n\n`);
+    }, 30000); // 30 saniyede bir ping
+    
+    req.on('close', () => {
+      clearInterval(keepAlive);
+    });
+  });
+  
+  // SSE clients storage
+  const sseClients: Record<string, Map<string, any>> = {};
+  
+  // Broadcast function for SSE
+  function broadcastToSSE(roomId: string, data: any) {
+    if (sseClients[roomId]) {
+      const message = `data: ${JSON.stringify(data)}\n\n`;
+      sseClients[roomId].forEach((res, clientId) => {
+        if (!res.writableEnded) {
+          res.write(message);
+        } else {
+          // Remove dead connections
+          sseClients[roomId].delete(clientId);
+        }
+      });
+      
+      // Clean up empty rooms
+      if (sseClients[roomId].size === 0) {
+        delete sseClients[roomId];
+      }
+    }
+  }
 
   // WebSocket connection handling
   wss.on('connection', (ws: ExtendedWebSocket, request) => {
