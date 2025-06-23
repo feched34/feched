@@ -43,17 +43,19 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
       // Production'da VITE_SERVER_URL kullan
       wsUrl = import.meta.env.VITE_SERVER_URL.replace('https://', 'wss://').replace('http://', 'ws://');
     } else if (window.location.hostname === 'feched.onrender.com') {
-      // Render.com'da doğrudan wss kullan
+      // Render.com'da doğrudan wss kullan - proxy üzerinden
       wsUrl = 'wss://feched.onrender.com';
     } else {
       // Development'ta mevcut origin kullan
       wsUrl = window.location.origin.replace('https://', 'wss://').replace('http://', 'ws://');
     }
     
-    // WebSocket path ve token ekle
-    wsUrl += `/ws?token=${Date.now()}`;
+    // WebSocket path ve token ekle - Render.com için özel format
+    const token = Date.now();
+    wsUrl += `/ws?token=${token}&roomId=${roomId}&userId=${userId}`;
     
-    console.log('Connecting to WebSocket:', wsUrl);
+    console.log('🎯 Connecting to WebSocket:', wsUrl);
+    console.log('🎯 Room ID:', roomId, 'User ID:', userId);
     
     try {
       wsRef.current = new WebSocket(wsUrl);

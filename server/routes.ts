@@ -51,6 +51,19 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
+  // Render.com için WebSocket proxy ayarları
+  app.use('/ws', (req, res, next) => {
+    // Render.com'da WebSocket upgrade'ini handle et
+    if (req.headers.upgrade && req.headers.upgrade.toLowerCase() === 'websocket') {
+      console.log('🎯 WebSocket upgrade request detected');
+      // WebSocket upgrade'i için özel header'lar
+      res.setHeader('Upgrade', 'websocket');
+      res.setHeader('Connection', 'Upgrade');
+      res.setHeader('Sec-WebSocket-Accept', 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
+    }
+    next();
+  });
+
   // WebSocket server for real-time participant updates - Render.com için optimize edildi
   const wss = new WebSocketServer({ 
     server: httpServer, 
@@ -58,7 +71,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Render.com için ek ayarlar
     perMessageDeflate: false, // Compression'ı kapat
     maxPayload: 1024 * 1024, // 1MB max payload
-    skipUTF8Validation: true // UTF8 validation'ı atla
+    skipUTF8Validation: true, // UTF8 validation'ı atla
+    // Render.com proxy ayarları
+    handleProtocols: () => 'websocket',
+    clientTracking: true
   });
 
   // LiveKit configuration
@@ -478,13 +494,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // WebSocket connection handling
-  wss.on('connection', (ws: ExtendedWebSocket) => {
-    console.log('WebSocket client connected');
+  wss.on('connection', (ws: ExtendedWebSocket, request) => {
+    console.log('🎯 WebSocket client connected');
+    console.log('🎯 Request URL:', request.url);
+    console.log('🎯 Headers:', request.headers);
+
+    // URL'den roomId ve userId'yi al
+    const url = new URL(request.url || '', `http://${request.headers.host}`);
+    const roomId = url.searchParams.get('roomId');
+    const userId = url.searchParams.get('userId');
+    
+    if (roomId) {
+      ws.roomId = roomId;
+      console.log('🎯 Client joined room:', roomId, 'User:', userId);
+    }
 
     // Heartbeat için ping-pong mekanizması
     ws.isAlive = true;
     ws.on('pong', () => {
       ws.isAlive = true;
+    });
+
+    // Render.com için özel error handling
+    ws.on('error', (error) => {
+      console.error('🎯 WebSocket error:', error);
+      // Render.com'da bağlantı hatalarını logla
+      if (error.message.includes('ECONNRESET') || error.message.includes('EPIPE')) {
+        console.log('🎯 Render.com connection reset detected');
+      }
     });
 
     ws.on('message', async (message: Buffer) => {
@@ -581,24 +618,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     ws.on('close', () => {
       console.log('WebSocket client disconnected');
     });
-
-    ws.on('error', (error) => {
-      console.error('WebSocket error:', error);
-    });
   });
 
-  // Heartbeat interval - her 30 saniyede bir ping gönder
+  // Heartbeat interval - Render.com için optimize edildi
   const heartbeatInterval = setInterval(() => {
+    let activeConnections = 0;
     wss.clients.forEach((ws: ExtendedWebSocket) => {
       if (ws.isAlive === false) {
-        console.log('Terminating inactive WebSocket connection');
+        console.log('🎯 Terminating inactive WebSocket connection');
         return ws.terminate();
       }
       
+      activeConnections++;
       ws.isAlive = false;
       ws.ping();
     });
-  }, 30000);
+    
+    // Render.com'da bağlantı durumunu logla
+    if (activeConnections > 0) {
+      console.log(`🎯 Active WebSocket connections: ${activeConnections}`);
+    }
+  }, 30000); // 30 saniyede bir ping
 
   // Cleanup on server close
   wss.on('close', () => {
