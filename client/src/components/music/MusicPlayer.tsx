@@ -152,6 +152,10 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
           fs: 0,
           modestbranding: 1,
           iv_load_policy: 3,
+          // Render.com için ek ayarlar
+          host: 'https://www.youtube-nocookie.com',
+          disablekb: 1,
+          autoplay: 0,
         },
         events: {
           onReady: (e: any) => {

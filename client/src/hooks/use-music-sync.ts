@@ -27,6 +27,7 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastStateUpdateRef = useRef<number>(0);
   const isConnectingRef = useRef<boolean>(false);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN || isConnectingRef.current) return;
@@ -52,12 +53,27 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
             type: 'join_room',
             roomId
           }));
+          
+          // Heartbeat başlat
+          if (heartbeatIntervalRef.current) {
+            clearInterval(heartbeatIntervalRef.current);
+          }
+          heartbeatIntervalRef.current = setInterval(() => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ type: 'ping' }));
+            }
+          }, 25000); // 25 saniyede bir ping
         }
       };
 
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          
+          // Pong mesajını işle
+          if (data.type === 'pong') {
+            return;
+          }
           
           // Müzik state broadcast mesajını dinle
           if (data.type === 'music_state_broadcast' && onStateUpdate) {
@@ -113,6 +129,12 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
       wsRef.current.onclose = (event) => {
         console.log('Music sync WebSocket disconnected, code:', event.code);
         isConnectingRef.current = false;
+        
+        // Heartbeat'i durdur
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+          heartbeatIntervalRef.current = null;
+        }
         
         // Yeniden bağlanma denemesi - sadece manuel kapatma değilse ve zaten bağlanmaya çalışmıyorsa
         if (event.code !== 1000 && !isConnectingRef.current) {
@@ -200,6 +222,9 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     return () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
       }
       if (wsRef.current) {
         wsRef.current.close(1000); // Normal kapatma

@@ -10,6 +10,7 @@ import fs from "fs";
 
 interface ExtendedWebSocket extends WebSocket {
   roomId?: string;
+  isAlive?: boolean;
 }
 
 // Oda bazlı soundboard state'ini memory'de tutmak için
@@ -457,9 +458,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   wss.on('connection', (ws: ExtendedWebSocket) => {
     console.log('WebSocket client connected');
 
+    // Heartbeat için ping-pong mekanizması
+    ws.isAlive = true;
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
     ws.on('message', async (message: Buffer) => {
       try {
         const data = JSON.parse(message.toString());
+        
+        // Heartbeat mesajı
+        if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
         
         if (data.type === 'join_room') {
           ws.roomId = data.roomId;
@@ -545,6 +558,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     ws.on('close', () => {
       console.log('WebSocket client disconnected');
     });
+
+    ws.on('error', (error) => {
+      console.error('WebSocket error:', error);
+    });
+  });
+
+  // Heartbeat interval - her 30 saniyede bir ping gönder
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws: ExtendedWebSocket) => {
+      if (ws.isAlive === false) {
+        console.log('Terminating inactive WebSocket connection');
+        return ws.terminate();
+      }
+      
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000);
+
+  // Cleanup on server close
+  wss.on('close', () => {
+    clearInterval(heartbeatInterval);
   });
 
   // Broadcast participant updates to WebSocket clients
