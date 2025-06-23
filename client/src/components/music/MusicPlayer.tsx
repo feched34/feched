@@ -68,7 +68,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
   const ytPlayer = useRef<any>(null);
 
   // Müzik senkronizasyonu
-  const { sendPlayCommand, sendPauseCommand, sendAddToQueueCommand, sendShuffleCommand, sendRepeatCommand } = useMusicSync({
+  const { sendPlayCommand, sendPauseCommand, sendAddToQueueCommand, sendShuffleCommand, sendRepeatCommand, sendStateUpdate } = useMusicSync({
     roomId: roomId || 'default-room',
     userId: userId || 'anonymous',
     onPlay: (videoId, userId) => {
@@ -78,14 +78,22 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       if (song) {
         setCurrentSong(song);
         setIsPlaying(true);
+        if (ytPlayer.current && isReady) {
+          ytPlayer.current.playVideo();
+        }
       }
     },
     onPause: (userId) => {
       console.log(`Remote pause command from ${userId}`);
       setIsPlaying(false);
+      if (ytPlayer.current && isReady) {
+        ytPlayer.current.pauseVideo();
+      }
     },
     onAddToQueue: (song, userId) => {
       console.log(`Remote add to queue from ${userId}:`, song);
+      // Kendi gönderdiğimiz mesajları işleme
+      if (userId === (userId || 'anonymous')) return;
       addSong(song);
       toast({
         title: "Şarkı eklendi",
@@ -94,11 +102,34 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
     },
     onShuffle: (isShuffled, userId) => {
       console.log(`Remote shuffle command from ${userId}:`, isShuffled);
+      // Kendi gönderdiğimiz mesajları işleme
+      if (userId === (userId || 'anonymous')) return;
       setIsShuffled(isShuffled);
     },
     onRepeat: (repeatMode, userId) => {
       console.log(`Remote repeat command from ${userId}:`, repeatMode);
+      // Kendi gönderdiğimiz mesajları işleme
+      if (userId === (userId || 'anonymous')) return;
       setRepeatMode(repeatMode as 'none' | 'all' | 'one');
+    },
+    onStateUpdate: (state) => {
+      console.log('Received music state update:', state);
+      // State'i güncelle
+      if (state.queue) {
+        setQueue(state.queue);
+      }
+      if (state.currentSong) {
+        setCurrentSong(state.currentSong);
+      }
+      if (state.isPlaying !== undefined) {
+        setIsPlaying(state.isPlaying);
+      }
+      if (state.repeatMode) {
+        setRepeatMode(state.repeatMode);
+      }
+      if (state.isShuffled !== undefined) {
+        setIsShuffled(state.isShuffled);
+      }
     }
   });
 
@@ -233,12 +264,23 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
     }
     
     try {
+      const newIsPlaying = !isPlaying;
+      setIsPlaying(newIsPlaying);
+      
       if (isPlaying) {
         console.log('Pausing video');
         ytPlayer.current.pauseVideo();
         // Senkronizasyon için pause komutu gönder
         if (roomId && userId) {
           sendPauseCommand();
+          // State güncellemesi gönder
+          sendStateUpdate({
+            queue,
+            currentSong,
+            isPlaying: false,
+            repeatMode,
+            isShuffled
+          });
         }
       } else {
         console.log('Playing video');
@@ -246,86 +288,128 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
         // Senkronizasyon için play komutu gönder
         if (roomId && userId && currentSong) {
           sendPlayCommand(currentSong.video_id);
+          // State güncellemesi gönder
+          sendStateUpdate({
+            queue,
+            currentSong,
+            isPlaying: true,
+            repeatMode,
+            isShuffled
+          });
         }
       }
-      setIsPlaying(!isPlaying);
     } catch (error: any) {
       console.error('Error toggling play/pause:', error);
     }
-  }, [currentSong, isReady, isPlaying, roomId, userId, sendPlayCommand, sendPauseCommand]);
+  }, [currentSong, isReady, isPlaying, roomId, userId, sendPlayCommand, sendPauseCommand, sendStateUpdate, queue, repeatMode, isShuffled]);
 
   // Kuyrukta ileri/geri - useCallback ile optimize et
   const nextSong = useCallback(() => {
     if (!currentSong) return;
     const idx = queue.findIndex(s => s.id === currentSong.id);
+    let nextSong: Song | null = null;
+    
     if (isShuffled) {
         const nextIndex = Math.floor(Math.random() * queue.length);
-        const nextSong = queue[nextIndex];
-        setCurrentSong(nextSong);
-        // Senkronizasyon için play komutu gönder
-        if (roomId && userId) {
-          sendPlayCommand(nextSong.video_id);
-        }
+        nextSong = queue[nextIndex];
     } else if (idx < queue.length - 1) {
-      const nextSong = queue[idx + 1];
+      nextSong = queue[idx + 1];
+    } else if (repeatMode === 'all') {
+        nextSong = queue[0];
+    }
+    
+    if (nextSong) {
       setCurrentSong(nextSong);
       // Senkronizasyon için play komutu gönder
       if (roomId && userId) {
         sendPlayCommand(nextSong.video_id);
+        // State güncellemesi gönder
+        sendStateUpdate({
+          queue,
+          currentSong: nextSong,
+          isPlaying: true,
+          repeatMode,
+          isShuffled
+        });
       }
-    } else if (repeatMode === 'all') {
-        const nextSong = queue[0];
-        setCurrentSong(nextSong);
-        // Senkronizasyon için play komutu gönder
-        if (roomId && userId) {
-          sendPlayCommand(nextSong.video_id);
-        }
     }
-  }, [currentSong, queue, isShuffled, repeatMode, roomId, userId, sendPlayCommand]);
+  }, [currentSong, queue, isShuffled, repeatMode, roomId, userId, sendPlayCommand, sendStateUpdate, isPlaying]);
 
   const prevSong = useCallback(() => {
     if (!currentSong) return;
     const idx = queue.findIndex(s => s.id === currentSong.id);
+    let prevSong: Song | null = null;
+    
     if (idx > 0) {
-      const prevSong = queue[idx - 1];
+      prevSong = queue[idx - 1];
+    } else if (repeatMode === 'all') {
+        prevSong = queue[queue.length - 1];
+    }
+    
+    if (prevSong) {
       setCurrentSong(prevSong);
       // Senkronizasyon için play komutu gönder
       if (roomId && userId) {
         sendPlayCommand(prevSong.video_id);
+        // State güncellemesi gönder
+        sendStateUpdate({
+          queue,
+          currentSong: prevSong,
+          isPlaying: true,
+          repeatMode,
+          isShuffled
+        });
       }
-    } else if (repeatMode === 'all') {
-        const prevSong = queue[queue.length - 1];
-        setCurrentSong(prevSong);
-        // Senkronizasyon için play komutu gönder
-        if (roomId && userId) {
-          sendPlayCommand(prevSong.video_id);
-        }
     }
-  }, [currentSong, queue, repeatMode, roomId, userId, sendPlayCommand]);
+  }, [currentSong, queue, repeatMode, roomId, userId, sendPlayCommand, sendStateUpdate, isPlaying]);
 
   // Kuyruğa şarkı ekle - useCallback ile optimize et
   const addSong = useCallback((song: Song) => {
     if (queue.find(s => s.id === song.id)) return;
-    setQueue(prev => [...prev, { ...song, queue_position: prev.length }]);
+    const newQueue = [...queue, { ...song, queue_position: queue.length }];
+    setQueue(newQueue);
     if (!currentSong) setCurrentSong(song);
     
     // Senkronizasyon için kuyruk ekleme komutu gönder
     if (roomId && userId) {
       sendAddToQueueCommand(song);
+      // State güncellemesi gönder
+      sendStateUpdate({
+        queue: newQueue,
+        currentSong: currentSong || song,
+        isPlaying,
+        repeatMode,
+        isShuffled
+      });
     }
-  }, [queue, currentSong, roomId, userId, sendAddToQueueCommand]);
+  }, [queue, currentSong, roomId, userId, sendAddToQueueCommand, sendStateUpdate, isPlaying, repeatMode, isShuffled]);
 
   // Kuyruktan şarkı sil - useCallback ile optimize et
   const removeSong = useCallback((id: string) => {
     const songToRemove = queue.find(s => s.id === id);
     if (!songToRemove) return;
 
-    setQueue(q => q.filter(s => s.id !== id));
+    const newQueue = queue.filter(s => s.id !== id);
+    setQueue(newQueue);
+    
+    let newCurrentSong = currentSong;
     if (currentSong?.id === id) {
-      const nextSongInQueue = queue.find(s => s.queue_position > songToRemove.queue_position);
-      setCurrentSong(nextSongInQueue || queue[0] || null);
+      const nextSongInQueue = newQueue.find(s => s.queue_position > songToRemove.queue_position);
+      newCurrentSong = nextSongInQueue || newQueue[0] || null;
+      setCurrentSong(newCurrentSong);
     }
-  }, [queue, currentSong]);
+
+    // State güncellemesi gönder
+    if (roomId && userId) {
+      sendStateUpdate({
+        queue: newQueue,
+        currentSong: newCurrentSong,
+        isPlaying,
+        repeatMode,
+        isShuffled
+      });
+    }
+  }, [queue, currentSong, roomId, userId, sendStateUpdate, isPlaying, repeatMode, isShuffled]);
 
   // YouTube arama - useCallback ile optimize et
   const searchYouTube = useCallback(async (query: string) => {
@@ -390,10 +474,18 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       // Senkronizasyon için repeat mode değişikliğini gönder
       if (roomId && userId) {
         sendRepeatCommand(newMode);
+        // State güncellemesi gönder
+        sendStateUpdate({
+          queue,
+          currentSong,
+          isPlaying,
+          repeatMode: newMode,
+          isShuffled
+        });
       }
       return newMode;
     });
-  }, [roomId, userId, sendRepeatCommand]);
+  }, [roomId, userId, sendRepeatCommand, sendStateUpdate, queue, currentSong, isPlaying, isShuffled]);
 
   // Shuffle toggle - useCallback ile optimize et
   const toggleShuffle = useCallback(() => {
@@ -402,10 +494,18 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       // Senkronizasyon için shuffle değişikliğini gönder
       if (roomId && userId) {
         sendShuffleCommand(newShuffle);
+        // State güncellemesi gönder
+        sendStateUpdate({
+          queue,
+          currentSong,
+          isPlaying,
+          repeatMode,
+          isShuffled: newShuffle
+        });
       }
       return newShuffle;
     });
-  }, [roomId, userId, sendShuffleCommand]);
+  }, [roomId, userId, sendShuffleCommand, sendStateUpdate, queue, currentSong, isPlaying, repeatMode]);
 
   // Queue'yu memoize et
   const sortedQueue = useMemo(() => {
