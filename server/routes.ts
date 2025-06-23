@@ -51,8 +51,15 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // WebSocket server for real-time participant updates
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  // WebSocket server for real-time participant updates - Render.com için optimize edildi
+  const wss = new WebSocketServer({ 
+    server: httpServer, 
+    path: '/ws',
+    // Render.com için ek ayarlar
+    perMessageDeflate: false, // Compression'ı kapat
+    maxPayload: 1024 * 1024, // 1MB max payload
+    skipUTF8Validation: true // UTF8 validation'ı atla
+  });
 
   // LiveKit configuration
   const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;

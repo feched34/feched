@@ -28,23 +28,49 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
   const lastStateUpdateRef = useRef<number>(0);
   const isConnectingRef = useRef<boolean>(false);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const retryCountRef = useRef<number>(0);
+  const maxRetries = 5;
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN || isConnectingRef.current) return;
 
     isConnectingRef.current = true;
 
-    // Environment variable'dan al veya mevcut origin'i kullan
-    const wsUrl = import.meta.env.VITE_SERVER_URL 
-      ? `${import.meta.env.VITE_SERVER_URL.replace('https://', 'wss://').replace('http://', 'ws://')}/ws?token=${Date.now()}`
-      : `${window.location.origin.replace('https://', 'wss://').replace('http://', 'ws://')}/ws?token=${Date.now()}`;
+    // Render.com için WebSocket URL'sini düzelt
+    let wsUrl: string;
+    
+    if (import.meta.env.VITE_SERVER_URL) {
+      // Production'da VITE_SERVER_URL kullan
+      wsUrl = import.meta.env.VITE_SERVER_URL.replace('https://', 'wss://').replace('http://', 'ws://');
+    } else if (window.location.hostname === 'feched.onrender.com') {
+      // Render.com'da doğrudan wss kullan
+      wsUrl = 'wss://feched.onrender.com';
+    } else {
+      // Development'ta mevcut origin kullan
+      wsUrl = window.location.origin.replace('https://', 'wss://').replace('http://', 'ws://');
+    }
+    
+    // WebSocket path ve token ekle
+    wsUrl += `/ws?token=${Date.now()}`;
+    
+    console.log('Connecting to WebSocket:', wsUrl);
     
     try {
       wsRef.current = new WebSocket(wsUrl);
 
+      // Connection timeout
+      const connectionTimeout = setTimeout(() => {
+        if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+          console.log('WebSocket connection timeout');
+          wsRef.current.close();
+        }
+      }, 10000); // 10 saniye timeout
+
       wsRef.current.onopen = () => {
         console.log('Music sync WebSocket connected');
         isConnectingRef.current = false;
+        retryCountRef.current = 0; // Başarılı bağlantıda retry sayısını sıfırla
+        clearTimeout(connectionTimeout);
         
         // WebSocket'in hazır olduğundan emin ol
         if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -88,6 +114,8 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
             // Kendi gönderdiğimiz mesajları işleme
             if (message.userId === userId) return;
             
+            console.log('Received music control:', message);
+            
             switch (message.type) {
               case 'play':
                 if (message.videoId && onPlay) {
@@ -124,11 +152,13 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
       wsRef.current.onerror = (error) => {
         console.error('Music sync WebSocket error:', error);
         isConnectingRef.current = false;
+        clearTimeout(connectionTimeout);
       };
 
       wsRef.current.onclose = (event) => {
         console.log('Music sync WebSocket disconnected, code:', event.code);
         isConnectingRef.current = false;
+        clearTimeout(connectionTimeout);
         
         // Heartbeat'i durdur
         if (heartbeatIntervalRef.current) {
@@ -137,7 +167,12 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
         }
         
         // Yeniden bağlanma denemesi - sadece manuel kapatma değilse ve zaten bağlanmaya çalışmıyorsa
-        if (event.code !== 1000 && !isConnectingRef.current) {
+        if (event.code !== 1000 && !isConnectingRef.current && retryCountRef.current < maxRetries) {
+          retryCountRef.current++;
+          const retryDelay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000); // Exponential backoff, max 10s
+          
+          console.log(`Retrying WebSocket connection in ${retryDelay}ms (attempt ${retryCountRef.current}/${maxRetries})`);
+          
           if (reconnectTimeoutRef.current) {
             clearTimeout(reconnectTimeoutRef.current);
           }
@@ -145,7 +180,7 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
             if (wsRef.current?.readyState !== WebSocket.OPEN && wsRef.current?.readyState !== WebSocket.CONNECTING) {
               connect();
             }
-          }, 5000); // 5 saniye bekle
+          }, retryDelay);
         }
       };
     } catch (error) {
