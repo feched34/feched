@@ -52,8 +52,7 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
           
           if (data.type === 'chat_message') {
             const message: ChatMessage = data.message;
-            // Kendi gönderdiğimiz mesajları işleme
-            if (message.user.id === userId) return;
+            // Kendi gönderdiğimiz mesajları da işle - filtrelemeyi kaldırdık
             onMessageReceived(message);
           }
         } catch (error) {

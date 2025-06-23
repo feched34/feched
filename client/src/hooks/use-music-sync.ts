@@ -19,9 +19,10 @@ interface UseMusicSyncOptions {
   onAddToQueue?: (song: any, userId: string) => void;
   onShuffle?: (isShuffled: boolean, userId: string) => void;
   onRepeat?: (repeatMode: string, userId: string) => void;
+  onStateUpdate?: (state: any) => void;
 }
 
-export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat }: UseMusicSyncOptions) {
+export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate }: UseMusicSyncOptions) {
   const wsRef = useRef<WebSocket | null>(null);
 
   const connect = useCallback(() => {
@@ -50,6 +51,13 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          
+          // Müzik state broadcast mesajını dinle
+          if (data.type === 'music_state_broadcast' && onStateUpdate) {
+            console.log('Received music state broadcast:', data.state);
+            onStateUpdate(data.state);
+            return;
+          }
           
           if (data.type === 'music_control') {
             const message: MusicControlMessage = data;
@@ -106,7 +114,7 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     } catch (error) {
       console.error('Error creating WebSocket connection:', error);
     }
-  }, [roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat]);
+  }, [roomId, userId, onPlay, onPause, onAddToQueue, onShuffle, onRepeat, onStateUpdate]);
 
   const sendPlayCommand = useCallback(async (videoId: string) => {
     try {
@@ -148,6 +156,21 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     }
   }, [roomId, userId]);
 
+  // State güncellemesi gönderme fonksiyonu
+  const sendStateUpdate = useCallback((state: any) => {
+    try {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'music_state_update',
+          roomId,
+          state
+        }));
+      }
+    } catch (error) {
+      console.error('Error sending music state update:', error);
+    }
+  }, [roomId]);
+
   useEffect(() => {
     connect();
     
@@ -163,6 +186,7 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
     sendPauseCommand,
     sendAddToQueueCommand,
     sendShuffleCommand,
-    sendRepeatCommand
+    sendRepeatCommand,
+    sendStateUpdate
   };
 } 

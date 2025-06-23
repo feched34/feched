@@ -13,9 +13,10 @@ interface UseSoundSyncOptions {
   userId: string;
   onPlaySound?: (soundId: string, userId: string) => void;
   onStopSound?: (soundId: string, userId: string) => void;
+  onStateUpdate?: (state: any) => void;
 }
 
-export function useSoundSync({ roomId, userId, onPlaySound, onStopSound }: UseSoundSyncOptions) {
+export function useSoundSync({ roomId, userId, onPlaySound, onStopSound, onStateUpdate }: UseSoundSyncOptions) {
   const wsRef = useRef<WebSocket | null>(null);
 
   const connect = useCallback(() => {
@@ -44,6 +45,20 @@ export function useSoundSync({ roomId, userId, onPlaySound, onStopSound }: UseSo
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          
+          // Soundboard state broadcast mesajını dinle
+          if (data.type === 'soundboard_state_broadcast' && onStateUpdate) {
+            console.log('Received soundboard state broadcast:', data.state);
+            onStateUpdate(data.state);
+            return;
+          }
+          
+          // Direkt play_sound mesajını dinle (server'dan gelen)
+          if (data.type === 'play_sound' && data.soundId && onPlaySound) {
+            console.log('Received play_sound message:', data.soundId);
+            onPlaySound(data.soundId, data.userId || 'unknown');
+            return;
+          }
           
           if (data.type === 'sound_control') {
             const message: SoundControlMessage = data;
@@ -85,7 +100,7 @@ export function useSoundSync({ roomId, userId, onPlaySound, onStopSound }: UseSo
     } catch (error) {
       console.error('Error creating WebSocket connection:', error);
     }
-  }, [roomId, userId, onPlaySound, onStopSound]);
+  }, [roomId, userId, onPlaySound, onStopSound, onStateUpdate]);
 
   const sendPlaySoundCommand = useCallback(async (soundId: string) => {
     try {
@@ -103,6 +118,46 @@ export function useSoundSync({ roomId, userId, onPlaySound, onStopSound }: UseSo
     }
   }, [roomId, userId]);
 
+  // State güncellemesi gönderme fonksiyonu
+  const sendStateUpdate = useCallback((state: any) => {
+    try {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'soundboard_state_update',
+          roomId,
+          state
+        }));
+      }
+    } catch (error) {
+      console.error('Error sending soundboard state update:', error);
+    }
+  }, [roomId]);
+
+  // Ses dosyası yükleme fonksiyonu
+  const uploadSoundFile = useCallback(async (file: File) => {
+    try {
+      const formData = new FormData();
+      formData.append('sound', file);
+      formData.append('roomId', roomId);
+      formData.append('userId', userId);
+
+      const response = await fetch('/api/sound/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to upload sound file');
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error uploading sound file:', error);
+      throw error;
+    }
+  }, [roomId, userId]);
+
   useEffect(() => {
     connect();
     
@@ -115,6 +170,8 @@ export function useSoundSync({ roomId, userId, onPlaySound, onStopSound }: UseSo
 
   return {
     sendPlaySoundCommand,
-    sendStopSoundCommand
+    sendStopSoundCommand,
+    sendStateUpdate,
+    uploadSoundFile
   };
 } 

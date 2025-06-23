@@ -4,6 +4,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { insertParticipantSchema, type LiveKitTokenRequest, type LiveKitTokenResponse } from "@shared/schema";
 import { AccessToken } from "livekit-server-sdk";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 interface ExtendedWebSocket extends WebSocket {
   roomId?: string;
@@ -12,6 +15,37 @@ interface ExtendedWebSocket extends WebSocket {
 // Oda bazlı soundboard state'ini memory'de tutmak için
 type SoundboardState = { sounds: any[] };
 const roomSoundboardState: Record<string, SoundboardState> = {};
+
+// Multer konfigürasyonu
+const storageConfig = multer.diskStorage({
+  destination: (req: any, file: Express.Multer.File, cb: any) => {
+    const uploadDir = path.join(process.cwd(), 'uploads', 'sounds');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req: any, file: Express.Multer.File, cb: any) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage: storageConfig,
+  fileFilter: (req: any, file: Express.Multer.File, cb: any) => {
+    // Sadece ses dosyalarını kabul et
+    const allowedTypes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp3', 'audio/m4a'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Sadece ses dosyaları yüklenebilir'));
+    }
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  }
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -35,6 +69,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Oda bazlı müzik state'ini memory'de tutmak için
   const roomMusicState: Record<string, any> = {};
+
+  // Ses dosyası yükleme endpoint'i
+  app.post("/api/sound/upload", upload.single('sound'), async (req, res) => {
+    try {
+      const { roomId, userId } = req.body;
+      const file = req.file;
+
+      if (!roomId || !userId || !file) {
+        return res.status(400).json({ message: "Room ID, user ID and sound file are required" });
+      }
+
+      // Ses dosyası bilgilerini oluştur
+      const soundData = {
+        id: `sound_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: file.originalname,
+        filename: file.filename,
+        path: `/uploads/sounds/${file.filename}`,
+        uploadedBy: userId,
+        uploadedAt: new Date().toISOString(),
+        size: file.size,
+        mimetype: file.mimetype
+      };
+
+      // Oda soundboard state'ini güncelle
+      if (!roomSoundboardState[roomId]) {
+        roomSoundboardState[roomId] = { sounds: [] };
+      }
+      roomSoundboardState[roomId].sounds.push(soundData);
+
+      // WebSocket ile yeni ses dosyasını odadaki herkese bildir
+      wss.clients.forEach((client: ExtendedWebSocket) => {
+        if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
+          client.send(JSON.stringify({
+            type: 'soundboard_state_broadcast',
+            state: roomSoundboardState[roomId]
+          }));
+        }
+      });
+
+      res.json({ 
+        success: true, 
+        sound: soundData,
+        message: "Ses dosyası başarıyla yüklendi"
+      });
+    } catch (error) {
+      console.error("Sound upload error:", error);
+      res.status(500).json({ message: "Failed to upload sound file" });
+    }
+  });
+
+  // Ses dosyalarını serve etmek için static endpoint
+  app.use('/uploads/sounds', (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    next();
+  });
+
+  app.use('/uploads/sounds', (req, res) => {
+    const filePath = path.join(process.cwd(), 'uploads', 'sounds', req.path);
+    if (fs.existsSync(filePath)) {
+      res.sendFile(filePath);
+    } else {
+      res.status(404).json({ message: "Sound file not found" });
+    }
+  });
 
   // Generate LiveKit token
   app.post("/api/auth", async (req, res) => {
