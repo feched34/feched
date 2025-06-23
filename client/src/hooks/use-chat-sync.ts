@@ -90,13 +90,9 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
           
           if (data.type === 'chat_message') {
             const message: ChatMessage = data.message;
-            // Kendi gönderdiğimiz mesajları filtrele
-            if (message.user.id !== userId) {
-              console.log('💬 Received chat message from:', message.user.name);
-              onMessageReceived(message);
-            } else {
-              console.log('💬 Ignoring own message');
-            }
+            // Tüm mesajları al - kendi mesajlarımız da görünsün
+            console.log('💬 Received chat message from:', message.user.name);
+            onMessageReceived(message);
           }
           
           if (data.type === 'chat_history' && onHistoryReceived) {

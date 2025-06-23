@@ -48,13 +48,9 @@ const ChatBox: React.FC<ChatBoxProps> = memo(({ currentUser, users, roomId }) =>
     userName: currentUser.name,
     userAvatar: currentUser.avatar,
     onMessageReceived: (message: Message) => {
-      // Kendi mesajlarımızı filtrele - sadece başkalarının mesajlarını al
-      if (message.user.id !== currentUser.id) {
-        console.log('💬 Received message from:', message.user.name);
-        setMessages(prev => [...prev, message]);
-      } else {
-        console.log('💬 Ignoring own message in ChatBox');
-      }
+      // Tüm mesajları al - kendi mesajlarımız da görünsün
+      console.log('💬 Received message from:', message.user.name);
+      setMessages(prev => [...prev, message]);
     },
     onHistoryReceived: (historyMessages: Message[]) => {
       console.log('💬 Loading chat history:', historyMessages.length, 'messages');
@@ -71,7 +67,8 @@ const ChatBox: React.FC<ChatBoxProps> = memo(({ currentUser, users, roomId }) =>
   const sendMessage = useCallback(() => {
     if (!input.trim()) return;
     
-    // WebSocket ile gönder - kendi mesajını yerel state'e ekleme
+    // Sadece WebSocket ile gönder - yerel ekleme yok
+    // Mesaj server'dan geri gelecek ve orada eklenecek
     sendWebSocketMessage(input);
     
     setInput('');
