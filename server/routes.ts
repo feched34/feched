@@ -661,10 +661,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const url = new URL(request.url || '', `http://${request.headers.host}`);
     const roomId = url.searchParams.get('roomId');
     const userId = url.searchParams.get('userId');
+    const token = url.searchParams.get('token');
+    
+    console.log('🎯 Parsed URL params - roomId:', roomId, 'userId:', userId, 'token:', token);
+    console.log('🎯 Full URL:', request.url);
+    console.log('🎯 Search params:', url.searchParams.toString());
     
     if (roomId) {
       ws.roomId = roomId;
       console.log('🎯 Client joined room:', roomId, 'User:', userId);
+    } else {
+      console.log('🎯 Warning: No roomId found in URL');
+      // Fallback: default-room kullan
+      ws.roomId = 'default-room';
+      console.log('🎯 Using fallback roomId: default-room');
     }
 
     // Heartbeat için ping-pong mekanizması
@@ -813,6 +823,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Sohbet mesajı gönderme
         if (data.type === 'chat_message' && ws.roomId && data.message) {
           try {
+            console.log('💬 Received chat message from:', data.userName, 'in room:', ws.roomId);
+            
             // Mesajı database'e kaydet
             const savedMessage = await storage.createChatMessage({
               roomId: ws.roomId,
@@ -837,14 +849,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             };
             
             // Odadaki tüm kullanıcılara mesajı gönder
+            let clientCount = 0;
             wss.clients.forEach((client: ExtendedWebSocket) => {
               if (client.readyState === WebSocket.OPEN && client.roomId === ws.roomId) {
+                clientCount++;
+                console.log(`💬 Broadcasting to client ${clientCount} in room ${ws.roomId}`);
                 client.send(JSON.stringify({
                   type: 'chat_message',
                   message: chatMessage
                 }));
               }
             });
+            
+            console.log(`💬 Broadcasted chat message to ${clientCount} clients in room ${ws.roomId}`);
           } catch (error) {
             console.error('Error saving chat message:', error);
           }
@@ -855,7 +872,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     ws.on('close', () => {
-      console.log('WebSocket client disconnected');
+      console.log('WebSocket client disconnected from room:', ws.roomId);
     });
   });
 
