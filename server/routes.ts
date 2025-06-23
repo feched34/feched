@@ -662,10 +662,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // SSE headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Cache-Control'
+      'Access-Control-Allow-Headers': 'Cache-Control',
+      'X-Accel-Buffering': 'no' // Nginx için
     });
     
     // Send initial connection message
@@ -711,20 +712,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           delete sseClients[roomId];
         }
       }
+      clearInterval(keepAlive);
     });
     
-    // Keep connection alive
+    // Handle client error
+    req.on('error', (error) => {
+      console.error('📡 SSE client error:', error);
+      if (sseClients[roomId]) {
+        sseClients[roomId].delete(clientId);
+        if (sseClients[roomId].size === 0) {
+          delete sseClients[roomId];
+        }
+      }
+      clearInterval(keepAlive);
+    });
+    
+    // Keep connection alive - daha sık ping
     const keepAlive = setInterval(() => {
-      if (res.writableEnded) {
+      if (res.writableEnded || res.destroyed) {
         clearInterval(keepAlive);
         return;
       }
-      res.write(`data: ${JSON.stringify({ type: 'ping', timestamp: Date.now() })}\n\n`);
-    }, 30000); // 30 saniyede bir ping
-    
-    req.on('close', () => {
-      clearInterval(keepAlive);
-    });
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'ping', timestamp: Date.now() })}\n\n`);
+      } catch (error) {
+        console.error('Error sending SSE ping:', error);
+        clearInterval(keepAlive);
+      }
+    }, 15000); // 15 saniyede bir ping - daha sık
   });
   
   // SSE clients storage

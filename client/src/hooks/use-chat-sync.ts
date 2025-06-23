@@ -104,6 +104,23 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
       eventSourceRef.current.onerror = (error) => {
         console.error('💬 SSE error:', error);
         isConnectingRef.current = false;
+        
+        // SSE bağlantısı koptuğunda yeniden bağlan
+        if (retryCountRef.current < maxRetries) {
+          retryCountRef.current++;
+          const retryDelay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000);
+          
+          console.log(`💬 Retrying SSE connection in ${retryDelay}ms (attempt ${retryCountRef.current}/${maxRetries})`);
+          
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+          }
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (eventSourceRef.current?.readyState !== EventSource.OPEN) {
+              connect();
+            }
+          }, retryDelay);
+        }
       };
 
     } catch (error) {
