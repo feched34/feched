@@ -141,7 +141,10 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
   const sendMessage = useCallback(async (content: string) => {
     try {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        console.log('💬 Sending chat message:', content);
+        console.log('💬 WebSocket sendMessage called with:', content);
+        console.log('💬 WebSocket readyState:', wsRef.current.readyState);
+        console.log('💬 Sending to roomId:', roomId, 'userId:', userId);
+        
         wsRef.current.send(JSON.stringify({
           type: 'chat_message',
           roomId,
@@ -150,8 +153,11 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
           userAvatar,
           message: content
         }));
+        
+        console.log('💬 Message sent successfully');
       } else {
         console.error('💬 WebSocket not connected, cannot send message');
+        console.error('💬 WebSocket readyState:', wsRef.current?.readyState);
       }
     } catch (error) {
       console.error('Error sending chat message:', error);
