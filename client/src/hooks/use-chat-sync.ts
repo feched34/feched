@@ -32,9 +32,13 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
   const maxRetries = 5;
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN || isConnectingRef.current) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || isConnectingRef.current) {
+      console.log('💬 Already connected or connecting, skipping...');
+      return;
+    }
 
     isConnectingRef.current = true;
+    console.log('💬 Starting WebSocket connection...');
 
     // Render.com için WebSocket URL'sini düzelt
     let wsUrl: string;
@@ -57,13 +61,20 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
     console.log('💬 Connecting to Chat WebSocket:', wsUrl);
     
     try {
+      // Önceki bağlantıyı temizle
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      
       wsRef.current = new WebSocket(wsUrl);
 
       // Connection timeout
       const connectionTimeout = setTimeout(() => {
         if (wsRef.current?.readyState === WebSocket.CONNECTING) {
-          console.log('Chat WebSocket connection timeout');
+          console.log('💬 Chat WebSocket connection timeout');
           wsRef.current.close();
+          isConnectingRef.current = false;
         }
       }, 10000); // 10 saniye timeout
 
@@ -105,13 +116,13 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
       };
 
       wsRef.current.onerror = (error) => {
-        console.error('Chat WebSocket error:', error);
+        console.error('💬 Chat WebSocket error:', error);
         isConnectingRef.current = false;
         clearTimeout(connectionTimeout);
       };
 
       wsRef.current.onclose = (event) => {
-        console.log('💬 Chat WebSocket disconnected, code:', event.code);
+        console.log('💬 Chat WebSocket disconnected, code:', event.code, 'reason:', event.reason);
         isConnectingRef.current = false;
         clearTimeout(connectionTimeout);
         

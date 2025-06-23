@@ -879,9 +879,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Heartbeat interval - Render.com için optimize edildi
   const heartbeatInterval = setInterval(() => {
     let activeConnections = 0;
+    let terminatedConnections = 0;
+    
     wss.clients.forEach((ws: ExtendedWebSocket) => {
       if (ws.isAlive === false) {
         console.log('🎯 Terminating inactive WebSocket connection');
+        terminatedConnections++;
         return ws.terminate();
       }
       
@@ -891,10 +894,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     
     // Render.com'da bağlantı durumunu logla
-    if (activeConnections > 0) {
-      console.log(`🎯 Active WebSocket connections: ${activeConnections}`);
+    if (activeConnections > 0 || terminatedConnections > 0) {
+      console.log(`🎯 WebSocket stats - Active: ${activeConnections}, Terminated: ${terminatedConnections}`);
     }
-  }, 30000); // 30 saniyede bir ping
+  }, 60000); // 60 saniyede bir ping - daha az sıklıkta
 
   // Cleanup on server close
   wss.on('close', () => {
