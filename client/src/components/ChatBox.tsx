@@ -42,37 +42,41 @@ const ChatBox: React.FC<ChatBoxProps> = memo(({ currentUser, users, roomId }) =>
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // WebSocket ile sohbet senkronizasyonu
-  const { sendMessage: sendWebSocketMessage } = useChatSync({
+  const { sendMessage: sendWebSocketMessage, loadChatHistory } = useChatSync({
     roomId,
     userId: currentUser.id,
     userName: currentUser.name,
     userAvatar: currentUser.avatar,
     onMessageReceived: (message: Message) => {
-      setMessages(prev => [...prev, message]);
+      // Kendi mesajlarımızı filtrele - sadece başkalarının mesajlarını al
+      if (message.user.id !== currentUser.id) {
+        console.log('💬 Received message from:', message.user.name);
+        setMessages(prev => [...prev, message]);
+      } else {
+        console.log('💬 Ignoring own message in ChatBox');
+      }
+    },
+    onHistoryReceived: (historyMessages: Message[]) => {
+      console.log('💬 Loading chat history:', historyMessages.length, 'messages');
+      setMessages(historyMessages);
     }
   });
+
+  // Sayfa yüklendiğinde sohbet geçmişini yükle
+  useEffect(() => {
+    loadChatHistory();
+  }, [loadChatHistory]);
 
   // Mesaj gönder - useCallback ile optimize et
   const sendMessage = useCallback(() => {
     if (!input.trim()) return;
     
-    const newMsg: Message = {
-      id: 'm' + Date.now(),
-      user: currentUser,
-      content: input,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      type: 'text',
-    };
-    
-    // Yerel state'e ekle
-    setMessages(prev => [...prev, newMsg]);
-    
-    // WebSocket ile gönder
+    // WebSocket ile gönder - kendi mesajını yerel state'e ekleme
     sendWebSocketMessage(input);
     
     setInput('');
     setShowEmojis(false);
-  }, [input, currentUser, sendWebSocketMessage]);
+  }, [input, sendWebSocketMessage]);
 
   // Emoji ekle - useCallback ile optimize et
   const addEmoji = useCallback((emoji: string) => {

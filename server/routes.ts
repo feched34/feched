@@ -575,6 +575,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Chat messages endpoint'leri
+  app.get("/api/chat/:roomId/messages", async (req, res) => {
+    try {
+      const { roomId } = req.params;
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      const messages = await storage.getChatMessagesByRoom(roomId, limit);
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching chat messages:", error);
+      res.status(500).json({ message: "Failed to fetch chat messages" });
+    }
+  });
+
+  app.post("/api/chat/:roomId/messages", async (req, res) => {
+    try {
+      const { roomId } = req.params;
+      const { userId, userName, userAvatar, content, messageType = 'text', mediaUrl } = req.body;
+      
+      if (!userId || !userName || !content) {
+        return res.status(400).json({ message: "User ID, user name and content are required" });
+      }
+
+      const message = await storage.createChatMessage({
+        roomId,
+        userId,
+        userName,
+        userAvatar,
+        content,
+        messageType,
+        mediaUrl
+      });
+
+      // WebSocket ile mesajı yayınla
+      const chatMessage = {
+        id: 'm' + message.id,
+        user: {
+          id: message.userId,
+          name: message.userName,
+          avatar: message.userAvatar || '/logo.png'
+        },
+        content: message.content,
+        time: new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        type: message.messageType as 'text' | 'image' | 'video',
+        mediaUrl: message.mediaUrl
+      };
+
+      wss.clients.forEach((client: ExtendedWebSocket) => {
+        if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
+          client.send(JSON.stringify({
+            type: 'chat_message',
+            message: chatMessage
+          }));
+        }
+      });
+
+      res.json({ success: true, message });
+    } catch (error) {
+      console.error("Error creating chat message:", error);
+      res.status(500).json({ message: "Failed to create chat message" });
+    }
+  });
+
+  app.delete("/api/chat/:roomId/messages", async (req, res) => {
+    try {
+      const { roomId } = req.params;
+      
+      await storage.deleteChatMessagesByRoom(roomId);
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting chat messages:", error);
+      res.status(500).json({ message: "Failed to delete chat messages" });
+    }
+  });
+
   // WebSocket connection handling
   wss.on('connection', (ws: ExtendedWebSocket, request) => {
     console.log('🎯 WebSocket client connected');
@@ -647,6 +723,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
               state: roomSoundboardState[data.roomId]
             }));
           }
+          
+          // Odaya yeni katılan kullanıcıya mevcut sohbet mesajlarını gönder
+          try {
+            const existingMessages = await storage.getChatMessagesByRoom(data.roomId, 50);
+            if (existingMessages.length > 0) {
+              const formattedMessages = existingMessages.map(msg => ({
+                id: 'm' + msg.id,
+                user: {
+                  id: msg.userId,
+                  name: msg.userName,
+                  avatar: msg.userAvatar || '/logo.png'
+                },
+                content: msg.content,
+                time: new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                type: msg.messageType as 'text' | 'image' | 'video',
+                mediaUrl: msg.mediaUrl
+              }));
+              
+              ws.send(JSON.stringify({
+                type: 'chat_history',
+                messages: formattedMessages
+              }));
+            }
+          } catch (error) {
+            console.error('Error fetching chat history:', error);
+          }
         }
         
         // Video state güncellemesi
@@ -710,27 +812,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Sohbet mesajı gönderme
         if (data.type === 'chat_message' && ws.roomId && data.message) {
-          const chatMessage = {
-            id: 'm' + Date.now(),
-            user: {
-              id: data.userId,
-              name: data.userName,
-              avatar: data.userAvatar || '/logo.png'
-            },
-            content: data.message,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            type: 'text'
-          };
-          
-          // Odadaki tüm kullanıcılara mesajı gönder
-          wss.clients.forEach((client: ExtendedWebSocket) => {
-            if (client.readyState === WebSocket.OPEN && client.roomId === ws.roomId) {
-              client.send(JSON.stringify({
-                type: 'chat_message',
-                message: chatMessage
-              }));
-            }
-          });
+          try {
+            // Mesajı database'e kaydet
+            const savedMessage = await storage.createChatMessage({
+              roomId: ws.roomId,
+              userId: data.userId,
+              userName: data.userName,
+              userAvatar: data.userAvatar,
+              content: data.message,
+              messageType: 'text',
+              mediaUrl: null
+            });
+
+            const chatMessage = {
+              id: 'm' + savedMessage.id,
+              user: {
+                id: data.userId,
+                name: data.userName,
+                avatar: data.userAvatar || '/logo.png'
+              },
+              content: data.message,
+              time: new Date(savedMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: 'text' as const
+            };
+            
+            // Odadaki tüm kullanıcılara mesajı gönder
+            wss.clients.forEach((client: ExtendedWebSocket) => {
+              if (client.readyState === WebSocket.OPEN && client.roomId === ws.roomId) {
+                client.send(JSON.stringify({
+                  type: 'chat_message',
+                  message: chatMessage
+                }));
+              }
+            });
+          } catch (error) {
+            console.error('Error saving chat message:', error);
+          }
         }
       } catch (error) {
         console.error('WebSocket message error:', error);
