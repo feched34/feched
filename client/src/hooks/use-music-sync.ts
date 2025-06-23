@@ -67,13 +67,14 @@ export function useMusicSync({ roomId, userId, onPlay, onPause, onAddToQueue, on
       }, 10000); // 10 saniye timeout
 
       wsRef.current.onopen = () => {
-        console.log('Music sync WebSocket connected');
+        console.log('🎵 Music sync WebSocket connected successfully');
         isConnectingRef.current = false;
         retryCountRef.current = 0; // Başarılı bağlantıda retry sayısını sıfırla
         clearTimeout(connectionTimeout);
         
         // WebSocket'in hazır olduğundan emin ol
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+          console.log('🎵 Joining room:', roomId);
           // Odaya katıl
           wsRef.current.send(JSON.stringify({
             type: 'join_room',

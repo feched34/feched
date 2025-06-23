@@ -308,6 +308,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Room ID, video ID and user ID are required" });
       }
 
+      console.log(`🎵 Play command from ${userId} for video ${videoId} in room ${roomId}`);
+
       // WebSocket ile müzik çalma komutunu yayınla
       broadcastMusicControl(roomId, {
         type: 'play',
@@ -315,6 +317,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
         timestamp: Date.now()
       });
+
+      // State'i güncelle
+      if (!roomMusicState[roomId]) {
+        roomMusicState[roomId] = { isPlaying: false, currentVideoId: null };
+      }
+      roomMusicState[roomId].isPlaying = true;
+      roomMusicState[roomId].currentVideoId = videoId;
 
       res.json({ success: true });
     } catch (error) {
@@ -331,12 +340,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Room ID and user ID are required" });
       }
 
+      console.log(`🎵 Pause command from ${userId} in room ${roomId}`);
+
       // WebSocket ile müzik duraklatma komutunu yayınla
       broadcastMusicControl(roomId, {
         type: 'pause',
         userId,
         timestamp: Date.now()
       });
+
+      // State'i güncelle
+      if (roomMusicState[roomId]) {
+        roomMusicState[roomId].isPlaying = false;
+      }
 
       res.json({ success: true });
     } catch (error) {
@@ -605,14 +621,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Broadcast music control to WebSocket clients
   function broadcastMusicControl(roomId: string, musicControl: any) {
+    console.log(`🎵 Broadcasting music control to room ${roomId}:`, musicControl);
+    
+    let clientCount = 0;
     wss.clients.forEach((client: ExtendedWebSocket) => {
       if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
+        clientCount++;
+        console.log(`🎵 Sending to client ${clientCount}`);
         client.send(JSON.stringify({
           type: 'music_control',
           ...musicControl
         }));
       }
     });
+    
+    console.log(`🎵 Broadcasted to ${clientCount} clients in room ${roomId}`);
   }
 
   // Broadcast sound control to WebSocket clients
