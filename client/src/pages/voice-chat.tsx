@@ -159,7 +159,6 @@ export default function VoiceChat() {
                 <span>Giriş Yap</span>
               </button>
             </form>
-            <div className="text-[#6a7bfdbb] select-none text-xs tracking-wide text-center mt-7">Goçlarla s2şşşşşşş</div>
           </main>
         </div>
         <LoadingOverlay isVisible={isConnecting} />
