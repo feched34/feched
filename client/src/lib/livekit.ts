@@ -6,8 +6,6 @@ import {
   LocalAudioTrack,
   createLocalAudioTrack,
   ConnectionState,
-  TrackPublication,
-  Participant,
   RemoteTrackPublication,
   RemoteTrack,
   Track,
@@ -21,146 +19,239 @@ export interface VoiceChatOptions {
   onParticipantDisconnected?: (participant: RemoteParticipant) => void;
   onConnectionStateChanged?: (state: string) => void;
   onError?: (error: Error) => void;
+  onReconnecting?: () => void;
+  onReconnected?: () => void;
 }
 
 export class VoiceChatService {
   private room: Room;
   private audioTrack: LocalAudioTrack | null = null;
   private localParticipant: LocalParticipant | null = null;
+  private speakingListeners: Map<string, () => void> = new Map();
+  private connectOptions: VoiceChatOptions | null = null;
 
   constructor() {
     this.room = new Room({
-        adaptiveStream: true,
-        dynacast: true,
+      adaptiveStream: true,
+      dynacast: true,
+      reconnectPolicy: {
+        nextRetryDelayInMs: (context) => {
+          // Exponential backoff: 1s, 2s, 4s, 8s, max 10s
+          if (context.retryCount > 7) return null; // 7 denemeden sonra dur
+          return Math.min(1000 * Math.pow(2, context.retryCount), 10000);
+        }
+      }
     });
   }
 
   async connect(options: VoiceChatOptions): Promise<void> {
+    this.connectOptions = options;
+
     try {
-        console.log("Setting up room event listeners...");
-        if (options.onParticipantConnected) {
-            this.room.on(RoomEvent.ParticipantConnected, options.onParticipantConnected);
-        }
-        if (options.onParticipantDisconnected) {
-            this.room.on(RoomEvent.ParticipantDisconnected, options.onParticipantDisconnected);
-        }
+      // Event listener'ları temizle (varsa)
+      this.removeAllListeners();
+
+      // Participant connected/disconnected
+      if (options.onParticipantConnected) {
+        this.room.on(RoomEvent.ParticipantConnected, options.onParticipantConnected);
+      }
+      if (options.onParticipantDisconnected) {
+        this.room.on(RoomEvent.ParticipantDisconnected, options.onParticipantDisconnected);
+      }
+
+      // Connection state
       this.room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
-        console.log("Room connection state changed to:", state);
         options.onConnectionStateChanged?.(state.toString());
         if (state === ConnectionState.Connected) {
-            this.localParticipant = this.room.localParticipant;
-            console.log("Local participant set:", this.localParticipant?.identity);
+          this.localParticipant = this.room.localParticipant;
         }
       });
-      this.room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
-          if (track.kind === Track.Kind.Audio) {
-            track.attach();
-          }
+
+      // Auto reconnect events
+      this.room.on(RoomEvent.Reconnecting, () => {
+        console.log('🔄 LiveKit reconnecting...');
+        options.onReconnecting?.();
       });
 
-      console.log("Connecting to room with URL:", options.wsUrl);
+      this.room.on(RoomEvent.Reconnected, () => {
+        console.log('✅ LiveKit reconnected');
+        this.localParticipant = this.room.localParticipant;
+        options.onReconnected?.();
+      });
+
+      // Audio track auto-attach
+      this.room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: RemoteTrackPublication, _p: RemoteParticipant) => {
+        if (track.kind === Track.Kind.Audio) {
+          track.attach();
+        }
+      });
+
+      // Disconnected event
+      this.room.on(RoomEvent.Disconnected, (reason) => {
+        console.log('📴 LiveKit disconnected, reason:', reason);
+      });
+
       await this.room.connect(options.wsUrl, options.token);
       this.localParticipant = this.room.localParticipant;
-      console.log("Connected to room. Local participant:", this.localParticipant?.identity);
     } catch (error) {
       console.error('Failed to connect to voice chat:', error);
       options.onError?.(error as Error);
       throw error;
     }
   }
+
+  private removeAllListeners(): void {
+    this.room.removeAllListeners();
+    // Speaking listener'ları temizle
+    this.speakingListeners.clear();
+  }
   
-  async publishAudio(): Promise<void> {
-      try {
+  async publishAudio(deviceId?: string): Promise<void> {
+    try {
+      if (!this.localParticipant) {
+        await new Promise(resolve => setTimeout(resolve, 200));
         if (!this.localParticipant) {
-          console.log("Local participant is null, waiting for it to be set...");
-          // Kısa bir süre bekle ve tekrar dene
-          await new Promise(resolve => setTimeout(resolve, 100));
-          if (!this.localParticipant) {
-            console.error("Cannot publish audio: localParticipant is still null after waiting");
-            return;
-          }
+          console.error('Cannot publish audio: localParticipant is null');
+          return;
         }
-        
-        console.log("Creating local audio track...");
-        this.audioTrack = await createLocalAudioTrack({
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-        });
-        
-        console.log("Publishing audio track...");
-        await this.localParticipant.publishTrack(this.audioTrack);
-        console.log("Audio track published successfully");
-      } catch (error) {
-          console.error("Failed to publish audio:", error);
-          throw error;
       }
+      
+      const trackOptions: any = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+
+      if (deviceId) {
+        trackOptions.deviceId = deviceId;
+      }
+
+      this.audioTrack = await createLocalAudioTrack(trackOptions);
+      await this.localParticipant.publishTrack(this.audioTrack);
+    } catch (error) {
+      console.error('Failed to publish audio:', error);
+      throw error;
+    }
+  }
+
+  async switchAudioDevice(deviceId: string): Promise<void> {
+    if (this.audioTrack) {
+      // Mevcut track'ı durdur
+      this.audioTrack.stop();
+      if (this.localParticipant) {
+        await this.localParticipant.unpublishTrack(this.audioTrack);
+      }
+      this.audioTrack = null;
+    }
+    // Yeni cihazla yeniden yayınla
+    await this.publishAudio(deviceId);
   }
 
   async disconnect(): Promise<void> {
+    this.removeAllListeners();
+    
     if (this.audioTrack) {
-        this.audioTrack.stop();
-        this.localParticipant?.unpublishTrack(this.audioTrack);
-        this.audioTrack = null;
+      this.audioTrack.stop();
+      this.localParticipant?.unpublishTrack(this.audioTrack);
+      this.audioTrack = null;
     }
     await this.room.disconnect();
     this.localParticipant = null;
   }
 
   async setMicrophoneEnabled(enabled: boolean): Promise<void> {
-    if(this.localParticipant){
+    if (this.localParticipant) {
       await this.localParticipant.setMicrophoneEnabled(enabled);
     }
   }
 
   setAllParticipantsMuted(muted: boolean): void {
-      this.room.remoteParticipants.forEach(p => {
-          p.trackPublications.forEach((t: RemoteTrackPublication) => {
-              if(t.track && t.kind === Track.Kind.Audio) {
-                const audioTrack = t.track as RemoteAudioTrack;
-                audioTrack.setVolume(muted ? 0 : 1);
-              }
-          });
+    this.room.remoteParticipants.forEach(p => {
+      p.trackPublications.forEach((t: RemoteTrackPublication) => {
+        if (t.track && t.kind === Track.Kind.Audio) {
+          const audioTrack = t.track as RemoteAudioTrack;
+          audioTrack.setVolume(muted ? 0 : 1);
+        }
       });
+    });
   }
 
-  setParticipantVolume(participantSid: string, volume: number): void {
-      const participant = this.room.getParticipantByIdentity(participantSid);
-      if(participant && participant instanceof RemoteParticipant) {
-          participant.trackPublications.forEach((t: RemoteTrackPublication) => {
-            if (t.track && t.kind === Track.Kind.Audio) {
-                const audioTrack = t.track as RemoteAudioTrack;
-                audioTrack.setVolume(volume / 100);
-            }
-          });
+  setParticipantVolume(participantIdentity: string, volume: number): void {
+    const participant = this.room.getParticipantByIdentity(participantIdentity);
+    if (participant && participant instanceof RemoteParticipant) {
+      participant.trackPublications.forEach((t: RemoteTrackPublication) => {
+        if (t.track && t.kind === Track.Kind.Audio) {
+          const audioTrack = t.track as RemoteAudioTrack;
+          audioTrack.setVolume(volume / 100);
+        }
+      });
+    }
+  }
+
+  // Speaking event listener'ları düzgün yönet
+  setupSpeakingListeners(onSpeakingChanged: () => void): void {
+    // Önce eski listener'ları temizle
+    this.cleanupSpeakingListeners();
+
+    // Remote participant'lar için listener ekle
+    this.room.remoteParticipants.forEach((p) => {
+      const handler = () => onSpeakingChanged();
+      p.on('isSpeakingChanged' as any, handler);
+      this.speakingListeners.set(p.identity, handler);
+    });
+  }
+
+  cleanupSpeakingListeners(): void {
+    this.room.remoteParticipants.forEach((p) => {
+      const handler = this.speakingListeners.get(p.identity);
+      if (handler) {
+        p.off('isSpeakingChanged' as any, handler);
       }
+    });
+    this.speakingListeners.clear();
   }
 
   getParticipants(): Array<LocalParticipant | RemoteParticipant> {
     const participants: Array<LocalParticipant | RemoteParticipant> = [];
     
-    // Local participant'ı ekle
     if (this.localParticipant) {
       participants.push(this.localParticipant);
     } else if (this.room.localParticipant) {
-      // Eğer localParticipant henüz set edilmemişse, room'dan al
       participants.push(this.room.localParticipant);
     }
     
-    // Remote participant'ları ekle
     participants.push(...Array.from(this.room.remoteParticipants.values()));
-    
-    console.log('getParticipants called:', {
-      localParticipant: this.localParticipant?.identity || 'null',
-      roomLocalParticipant: this.room.localParticipant?.identity || 'null',
-      remoteParticipantsCount: this.room.remoteParticipants.size,
-      totalParticipants: participants.length
-    });
-    
     return participants;
   }
 
   isMuted(): boolean {
     return this.localParticipant?.isMicrophoneEnabled === false;
+  }
+
+  // Ses cihazlarını listele
+  static async getAudioDevices(): Promise<MediaDeviceInfo[]> {
+    try {
+      // İzin iste (cihaz listesi için gerekli)
+      await navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        stream.getTracks().forEach(t => t.stop());
+      });
+      
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter(d => d.kind === 'audioinput');
+    } catch (error) {
+      console.error('Error getting audio devices:', error);
+      return [];
+    }
+  }
+
+  // Ses çıkış cihazlarını listele
+  static async getAudioOutputDevices(): Promise<MediaDeviceInfo[]> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter(d => d.kind === 'audiooutput');
+    } catch (error) {
+      console.error('Error getting audio output devices:', error);
+      return [];
+    }
   }
 }

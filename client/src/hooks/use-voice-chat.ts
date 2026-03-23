@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { VoiceChatService } from '@/lib/livekit';
 import { apiRequest } from '@/lib/queryClient';
-import type { LiveKitTokenResponse, Participant } from '@shared/schema';
-import { RemoteParticipant, LocalParticipant, ParticipantEvent, Track } from 'livekit-client';
+import type { LiveKitTokenResponse } from '@shared/schema';
+import { RemoteParticipant, LocalParticipant } from 'livekit-client';
 
 export interface UseVoiceChatOptions {
   nickname: string;
@@ -12,56 +12,54 @@ export interface UseVoiceChatOptions {
 export interface VoiceChatState {
   isConnecting: boolean;
   isConnected: boolean;
+  isReconnecting: boolean;
   participants: Array<LocalParticipant | RemoteParticipant>;
   isMuted: boolean;
   isDeafened: boolean;
+  isPTTActive: boolean;
+  pttEnabled: boolean;
   connectionError: string | null;
   roomDuration: string;
+  audioDevices: MediaDeviceInfo[];
+  audioOutputDevices: MediaDeviceInfo[];
+  selectedAudioDevice: string;
+  selectedOutputDevice: string;
 }
 
 export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceChatOptions) {
   const [state, setState] = useState<VoiceChatState>({
     isConnecting: false,
     isConnected: false,
+    isReconnecting: false,
     participants: [],
     isMuted: false,
     isDeafened: false,
+    isPTTActive: false,
+    pttEnabled: false,
     connectionError: null,
     roomDuration: '00:00',
+    audioDevices: [],
+    audioOutputDevices: [],
+    selectedAudioDevice: '',
+    selectedOutputDevice: '',
   });
 
   const voiceChatRef = useRef<VoiceChatService | null>(null);
   const startTimeRef = useRef<Date | null>(null);
-  const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pttKeyRef = useRef<string>('Space');
+  const isPTTKeyDownRef = useRef<boolean>(false);
 
   const updateParticipants = useCallback(() => {
-    console.log('=== UPDATE PARTICIPANTS ===');
     if (voiceChatRef.current) {
-        const participants = voiceChatRef.current.getParticipants();
-        console.log('Current participants:', participants.map(p => ({ 
-          identity: p.identity, 
-          type: p instanceof LocalParticipant ? 'Local' : 'Remote',
-          sid: p.sid 
-        })));
-        
-        // State'i güncelle
-        setState(prev => {
-          console.log('Updating participants state from', prev.participants.length, 'to', participants.length);
-          return {...prev, participants: [...participants]};
-        });
+      const participants = voiceChatRef.current.getParticipants();
+      setState(prev => ({ ...prev, participants: [...participants] }));
 
-        // Remote participant'lar için speaking event'lerini dinle
-        participants.forEach(p => {
-            if (p instanceof RemoteParticipant) {
-                p.on(ParticipantEvent.IsSpeakingChanged, () => {
-                    console.log('Remote participant speaking changed:', p.identity);
-                    const updatedParticipants = voiceChatRef.current?.getParticipants() || [];
-                    setState(prev => ({...prev, participants: [...updatedParticipants]}));
-                });
-            }
-        });
-    } else {
-        console.log('voiceChatRef.current is null');
+      // Speaking event listener'larını düzgün ayarla
+      voiceChatRef.current.setupSpeakingListeners(() => {
+        const updatedParticipants = voiceChatRef.current?.getParticipants() || [];
+        setState(prev => ({ ...prev, participants: [...updatedParticipants] }));
+      });
     }
   }, []);
 
@@ -88,97 +86,86 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
     startTimeRef.current = null;
   }, []);
 
-  const connect = useCallback(async () => {
-    console.log('=== CONNECT START ===');
-    console.log('Current state:', { isConnecting: state.isConnecting, isConnected: state.isConnected });
-    
-    if (state.isConnecting || state.isConnected) {
-      console.log('Already connecting or connected, returning');
-      return;
+  // Ses cihazlarını yükle
+  const loadAudioDevices = useCallback(async () => {
+    try {
+      const inputDevices = await VoiceChatService.getAudioDevices();
+      const outputDevices = await VoiceChatService.getAudioOutputDevices();
+      setState(prev => ({
+        ...prev,
+        audioDevices: inputDevices,
+        audioOutputDevices: outputDevices,
+        selectedAudioDevice: prev.selectedAudioDevice || (inputDevices[0]?.deviceId || ''),
+        selectedOutputDevice: prev.selectedOutputDevice || (outputDevices[0]?.deviceId || ''),
+      }));
+    } catch (error) {
+      console.error('Error loading audio devices:', error);
     }
+  }, []);
+
+  const connect = useCallback(async () => {
+    if (state.isConnecting || state.isConnected) return;
     
     setState(prev => ({ ...prev, isConnecting: true, connectionError: null }));
-    console.log('Set isConnecting to true');
 
     try {
-      console.log('Connecting to voice chat with nickname:', nickname);
       const response = await apiRequest('POST', '/api/auth', { nickname, roomName });
       const { token, wsUrl }: LiveKitTokenResponse = await response.json();
-      
-      console.log('Received token and wsUrl:', { 
-        tokenLength: token.length, 
-        wsUrl,
-        tokenPreview: token.substring(0, 50) + '...'
-      });
 
       voiceChatRef.current = new VoiceChatService();
-      console.log('VoiceChatService instance created');
 
       await voiceChatRef.current.connect({
         token,
         wsUrl,
-        onParticipantConnected: () => {
-          console.log('Participant connected');
-          updateParticipants();
-        },
-        onParticipantDisconnected: () => {
-          console.log('Participant disconnected');
-          updateParticipants();
-        },
+        onParticipantConnected: () => updateParticipants(),
+        onParticipantDisconnected: () => updateParticipants(),
         onConnectionStateChanged: (connectionState) => {
-          console.log('Connection state changed:', connectionState);
           const isConnected = connectionState === 'connected';
           setState(prev => ({ ...prev, isConnected }));
           if (isConnected) {
-            console.log('Connected successfully, starting timer');
             startDurationTimer();
             updateParticipants();
           }
         },
+        onReconnecting: () => {
+          setState(prev => ({ ...prev, isReconnecting: true }));
+        },
+        onReconnected: () => {
+          setState(prev => ({ ...prev, isReconnecting: false }));
+          updateParticipants();
+        },
         onError: (error) => {
-          console.error('LiveKit connection error:', error);
-          setState(prev => ({ ...prev, connectionError: `Connection failed: ${error.message}`, isConnecting: false }));
+          setState(prev => ({ ...prev, connectionError: `Bağlantı hatası: ${error.message}`, isConnecting: false }));
         },
       });
 
-      console.log('VoiceChatService.connect() completed');
-
-      // Audio'yu bağlantı başarılı olduktan sonra yayınla
       if (voiceChatRef.current) {
-        console.log('Publishing audio after connection...');
-        await voiceChatRef.current.publishAudio();
-        console.log('Audio published successfully');
-        
-        // Audio yayınlandıktan sonra katılımcıları güncelle
-        console.log('Updating participants after audio publish...');
+        await voiceChatRef.current.publishAudio(state.selectedAudioDevice || undefined);
         updateParticipants();
       }
+
+      // Ses cihazlarını yükle
+      await loadAudioDevices();
 
       setState(prev => ({ 
         ...prev, 
         isConnecting: false, 
         isMuted: voiceChatRef.current?.isMuted() || false,
       }));
-      console.log('=== CONNECT END ===');
 
     } catch (error) {
-      console.error('Failed to connect to voice chat:', error);
-      let errorMessage = 'Failed to connect';
+      let errorMessage = 'Bağlantı başarısız';
       if (error instanceof Error) {
         errorMessage = error.message;
       }
       setState(prev => ({ ...prev, isConnecting: false, connectionError: errorMessage }));
-      console.log('=== CONNECT ERROR ===');
     }
-  }, [nickname, roomName, state.isConnecting, state.isConnected, updateParticipants, startDurationTimer]);
+  }, [nickname, roomName, state.isConnecting, state.isConnected, state.selectedAudioDevice, updateParticipants, startDurationTimer, loadAudioDevices]);
 
   const disconnect = useCallback(async () => {
-    console.log('=== DISCONNECT START ===');
-    
     if (voiceChatRef.current) {
       try {
         await voiceChatRef.current.disconnect();
-        console.log('VoiceChatService disconnected successfully');
       } catch (error) {
         console.error('Error disconnecting:', error);
       }
@@ -191,54 +178,104 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
       ...prev, 
       isConnected: false, 
       isConnecting: false,
+      isReconnecting: false,
       participants: [],
       connectionError: null 
     }));
-
-    console.log('=== DISCONNECT COMPLETE ===');
   }, [stopDurationTimer]);
 
   const toggleMute = useCallback(async () => {
-    console.log('=== TOGGLE MUTE ===');
     if (!voiceChatRef.current) return;
 
     try {
       const newMutedState = !voiceChatRef.current.isMuted();
       await voiceChatRef.current.setMicrophoneEnabled(!newMutedState);
       setState(prev => ({ ...prev, isMuted: newMutedState }));
-      console.log('Mute toggled successfully');
     } catch (error) {
       console.error('Error toggling mute:', error);
     }
   }, []);
 
   const toggleDeafen = useCallback(async () => {
-    console.log('=== TOGGLE DEAFEN ===');
     if (!voiceChatRef.current) return;
 
     try {
       const newDeafenedState = !state.isDeafened;
       voiceChatRef.current.setAllParticipantsMuted(newDeafenedState);
       
-      // Eğer kendimizi sağırlaştırıyorsak, mikrofonumuzu da kapatalım
-      if(newDeafenedState){
+      if (newDeafenedState) {
         await voiceChatRef.current.setMicrophoneEnabled(false);
-        setState(prev => ({ ...prev, isMuted: true, isDeafened: newDeafenedState }));
+        setState(prev => ({ ...prev, isMuted: true, isDeafened: true }));
       } else {
-        // Sağır modundan çıkarken mikrofonu eski haline getirebiliriz (isteğe bağlı)
-        // Biz burada kapalı tutmaya devam edelim, kullanıcı kendi açsın.
-        setState(prev => ({ ...prev, isDeafened: newDeafenedState }));
+        setState(prev => ({ ...prev, isDeafened: false }));
       }
-      
-      console.log('Deafen toggled successfully');
     } catch (error) {
       console.error('Error toggling deafen:', error);
     }
   }, [state.isDeafened]);
 
-  const setParticipantVolume = useCallback((participantSid: string, volume: number) => {
-    if(voiceChatRef.current) {
-        voiceChatRef.current.setParticipantVolume(participantSid, volume);
+  // Push-to-Talk
+  const togglePTT = useCallback(() => {
+    setState(prev => {
+      const newPTTEnabled = !prev.pttEnabled;
+      // PTT açıldığında mikrofonu kapat, kullanıcı tuşa basınca açılacak
+      if (newPTTEnabled && voiceChatRef.current) {
+        voiceChatRef.current.setMicrophoneEnabled(false);
+      }
+      return { ...prev, pttEnabled: newPTTEnabled, isMuted: newPTTEnabled };
+    });
+  }, []);
+
+  // PTT tuş dinleyicileri
+  useEffect(() => {
+    if (!state.pttEnabled || !state.isConnected) return;
+
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      if (e.code === pttKeyRef.current && !isPTTKeyDownRef.current) {
+        e.preventDefault();
+        isPTTKeyDownRef.current = true;
+        if (voiceChatRef.current) {
+          await voiceChatRef.current.setMicrophoneEnabled(true);
+          setState(prev => ({ ...prev, isMuted: false, isPTTActive: true }));
+        }
+      }
+    };
+
+    const handleKeyUp = async (e: KeyboardEvent) => {
+      if (e.code === pttKeyRef.current && isPTTKeyDownRef.current) {
+        e.preventDefault();
+        isPTTKeyDownRef.current = false;
+        if (voiceChatRef.current) {
+          await voiceChatRef.current.setMicrophoneEnabled(false);
+          setState(prev => ({ ...prev, isMuted: true, isPTTActive: false }));
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [state.pttEnabled, state.isConnected]);
+
+  // Ses cihazı değiştirme
+  const switchAudioDevice = useCallback(async (deviceId: string) => {
+    setState(prev => ({ ...prev, selectedAudioDevice: deviceId }));
+    if (voiceChatRef.current) {
+      try {
+        await voiceChatRef.current.switchAudioDevice(deviceId);
+      } catch (error) {
+        console.error('Error switching audio device:', error);
+      }
+    }
+  }, []);
+
+  const setParticipantVolume = useCallback((participantIdentity: string, volume: number) => {
+    if (voiceChatRef.current) {
+      voiceChatRef.current.setParticipantVolume(participantIdentity, volume);
     }
   }, []);
 
@@ -248,14 +285,26 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
     };
   }, [disconnect]);
 
+  // Cihaz değişikliklerini dinle
+  useEffect(() => {
+    const handler = () => loadAudioDevices();
+    navigator.mediaDevices?.addEventListener('devicechange', handler);
+    return () => {
+      navigator.mediaDevices?.removeEventListener('devicechange', handler);
+    };
+  }, [loadAudioDevices]);
+
   const returnValue = useMemo(() => ({
     ...state,
     connect,
     disconnect,
     toggleMute,
     toggleDeafen,
+    togglePTT,
+    switchAudioDevice,
     setParticipantVolume,
-  }), [state, connect, disconnect, toggleMute, toggleDeafen, setParticipantVolume]);
+    loadAudioDevices,
+  }), [state, connect, disconnect, toggleMute, toggleDeafen, togglePTT, switchAudioDevice, setParticipantVolume, loadAudioDevices]);
 
   return returnValue;
 }

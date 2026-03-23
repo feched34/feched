@@ -1,6 +1,6 @@
 import React, { memo, useState, useEffect, useCallback } from 'react';
 import { Button } from './ui/button';
-import { Mic, MicOff, Headphones, VolumeX, Wifi, WifiOff } from 'lucide-react';
+import { Mic, MicOff, Headphones, VolumeX, Wifi, WifiOff, Radio } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from '../lib/queryClient';
 
@@ -9,120 +9,123 @@ interface VoiceControlsProps {
   isDeafened: boolean;
   toggleMute: () => void;
   toggleDeafen: () => void;
+  pttEnabled?: boolean;
+  togglePTT?: () => void;
+  isPTTActive?: boolean;
 }
 
-const VoiceControls: React.FC<VoiceControlsProps> = memo(({ isMuted, isDeafened, toggleMute, toggleDeafen }) => {
+const VoiceControls: React.FC<VoiceControlsProps> = memo(({ isMuted, isDeafened, toggleMute, toggleDeafen, pttEnabled, togglePTT, isPTTActive }) => {
   const [ping, setPing] = useState<number | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
-  // Ping ölçümü
   const measurePing = useCallback(async () => {
     const startTime = Date.now();
     try {
-      const response = await apiRequest('GET', '/api/ping');
-      const endTime = Date.now();
-      const pingTime = endTime - startTime;
-      setPing(pingTime);
+      await apiRequest('GET', '/api/ping');
+      setPing(Date.now() - startTime);
       setIsConnected(true);
-    } catch (error) {
+    } catch {
       setIsConnected(false);
     }
   }, []);
 
-  // Ping ölçümünü başlat
   useEffect(() => {
     measurePing();
-    const interval = setInterval(measurePing, 5000); // Her 5 saniyede bir
-
-    return () => {
-      clearInterval(interval);
-    };
+    const interval = setInterval(measurePing, 5000);
+    return () => clearInterval(interval);
   }, [measurePing]);
 
-  // Ping rengi belirleme
-  const getPingColor = useCallback((pingValue: number) => {
-    if (pingValue <= 50) return 'text-green-400'; // Yeşil - Mükemmel
-    if (pingValue <= 100) return 'text-yellow-400'; // Sarı - İyi
-    if (pingValue <= 200) return 'text-orange-400'; // Turuncu - Orta
-    return 'text-red-400'; // Kırmızı - Kötü
-  }, []);
-
-  // Ping durumu ikonu
-  const getPingIcon = useCallback((pingValue: number) => {
-    if (pingValue <= 50) return <Wifi className="h-3 w-3" />;
-    if (pingValue <= 100) return <Wifi className="h-3 w-3" />;
-    if (pingValue <= 200) return <Wifi className="h-3 w-3" />;
-    return <WifiOff className="h-3 w-3" />;
+  const getPingColor = useCallback((v: number) => {
+    if (v <= 50) return 'text-green-400';
+    if (v <= 100) return 'text-yellow-400';
+    if (v <= 200) return 'text-orange-400';
+    return 'text-red-400';
   }, []);
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex items-center justify-center gap-4 p-3 bg-[#101320] rounded-xl border border-[#23253a]">
-          {/* Mikrofon Butonu */}
+      <div className="flex items-center justify-center gap-2 sm:gap-3 p-2 sm:p-3 bg-[#101320] rounded-xl border border-[#23253a]">
+        {/* Mikrofon */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost" size="icon" onClick={toggleMute}
+              className={`rounded-full w-10 h-10 transition-all duration-200 ${
+                isMuted ? 'text-red-500 hover:text-red-400 hover:bg-red-500/10' : 'text-[#e5eaff] hover:text-[#2ec8fa] hover:bg-[#2ec8fa22]'
+              }`}
+              disabled={pttEnabled}
+            >
+              {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
+            <p>{pttEnabled ? 'PTT Aktif' : isMuted ? 'Mikrofonu Aç' : 'Mikrofonu Kapat'}</p>
+          </TooltipContent>
+        </Tooltip>
+        
+        {/* Sağırlaşma */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost" size="icon" onClick={toggleDeafen}
+              className={`rounded-full w-10 h-10 transition-all duration-200 ${
+                isDeafened ? 'text-red-500 hover:text-red-400 hover:bg-red-500/10' : 'text-[#e5eaff] hover:text-[#2ec8fa] hover:bg-[#2ec8fa22]'
+              }`}
+            >
+              {isDeafened ? <VolumeX size={20} /> : <Headphones size={20} />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
+            <p>{isDeafened ? 'Sesi Aç' : 'Sessize Al'}</p>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Push-to-Talk */}
+        {togglePTT && (
           <Tooltip>
-              <TooltipTrigger asChild>
-                  <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={toggleMute}
-                      className={`hover:bg-[#2ec8fa22] rounded-full w-12 h-12 transition-all duration-200 ${
-                        isMuted 
-                          ? 'text-red-500 hover:text-red-400 hover:bg-red-50022' 
-                          : 'text-[#e5eaff] hover:text-[#2ec8fa]'
-                      }`}
-                  >
-                      {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
-                  </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
-                  <p>{isMuted ? 'Mikrofonu Aç' : 'Mikrofonu Kapat'}</p>
-              </TooltipContent>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost" size="icon" onClick={togglePTT}
+                className={`rounded-full w-10 h-10 transition-all duration-200 ${
+                  pttEnabled 
+                    ? isPTTActive 
+                      ? 'text-green-400 bg-green-400/20 ring-2 ring-green-400/50' 
+                      : 'text-[#eac073] hover:text-[#ffb300] bg-[#eac07322]'
+                    : 'text-[#7c8dbb] hover:text-[#aab7e7] hover:bg-[#2ec8fa22]'
+                }`}
+              >
+                <Radio size={20} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
+              <p>{pttEnabled ? 'PTT Kapat (Space ile konuş)' : 'PTT Aç (Baskonuş)'}</p>
+            </TooltipContent>
           </Tooltip>
-          
-          {/* Sağırlaşma Butonu */}
-          <Tooltip>
-              <TooltipTrigger asChild>
-                  <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={toggleDeafen}
-                      className={`hover:bg-[#2ec8fa22] rounded-full w-12 h-12 transition-all duration-200 ${
-                        isDeafened 
-                          ? 'text-red-500 hover:text-red-400 hover:bg-red-50022' 
-                          : 'text-[#e5eaff] hover:text-[#2ec8fa]'
-                      }`}
-                  >
-                      {isDeafened ? <VolumeX size={24} /> : <Headphones size={24} />}
-                  </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
-                  <p>{isDeafened ? 'Sesi Aç' : 'Sağırlaş'}</p>
-              </TooltipContent>
-          </Tooltip>
-          
-          {/* Ping Göstergesi */}
-          <Tooltip>
-              <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#0f1422aa] border border-[#4dc9fa22]">
-                      {isConnected ? (
-                          <>
-                              {getPingIcon(ping || 0)}
-                              <span className={`text-xs font-mono ${getPingColor(ping || 0)}`}>
-                                  {ping ? `${ping}ms` : '...'}
-                              </span>
-                          </>
-                      ) : (
-                          <>
-                              <WifiOff className="h-3 w-3 text-red-400" />
-                              <span className="text-xs text-red-400">Bağlantı Yok</span>
-                          </>
-                      )}
-                  </div>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
-                  <p>Bağlantı Durumu</p>
-              </TooltipContent>
-          </Tooltip>
+        )}
+        
+        {/* Ping */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#0f1422aa] border border-[#4dc9fa22]">
+              {isConnected ? (
+                <>
+                  <Wifi className="h-3 w-3" />
+                  <span className={`text-[10px] font-mono ${getPingColor(ping || 0)}`}>
+                    {ping ? `${ping}ms` : '...'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="h-3 w-3 text-red-400" />
+                  <span className="text-[10px] text-red-400">Yok</span>
+                </>
+              )}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
+            <p>Bağlantı Durumu</p>
+          </TooltipContent>
+        </Tooltip>
       </div>
     </TooltipProvider>
   );
@@ -130,4 +133,4 @@ const VoiceControls: React.FC<VoiceControlsProps> = memo(({ isMuted, isDeafened,
 
 VoiceControls.displayName = "VoiceControls";
 
-export default VoiceControls; 
+export default VoiceControls;
