@@ -8,7 +8,7 @@ import SoundManager from '@/components/SoundManager';
 import VoiceControls from '@/components/VoiceControls';
 import { LoadingOverlay } from '@/components/ui/loading-overlay';
 import { ErrorModal } from '@/components/ui/error-modal';
-import { Volume2, Mic, MicOff, VolumeX, LogOut, MessageCircle, Music, Users, Settings, Radio, Server, Keyboard, X, ChevronRight, Headphones } from 'lucide-react';
+import { Volume2, Mic, MicOff, VolumeX, LogOut, MessageCircle, Music, Users, Radio, Server, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 
 // localStorage helper
@@ -52,7 +52,6 @@ export default function VoiceChat() {
   const [pendingConnect, setPendingConnect] = useState(false);
   const [showServerPanel, setShowServerPanel] = useState(false);
   const [pttKeyBinding, setPttKeyBinding] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
 
   const {
     isConnecting,
@@ -314,12 +313,17 @@ export default function VoiceChat() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3">
             <span className="hidden sm:block text-[#aab7e7] text-sm">
               <span className="font-semibold text-[#eac073]">{nickname}</span>
             </span>
-            <button onClick={() => setShowServerPanel(!showServerPanel)} className="text-[#aab7e7] hover:text-[#4dc9fa] transition-all duration-300 p-2 hover:bg-[#4dc9fa22] rounded-lg" title="Sunucularım">
-              <Server size={18} />
+            <button 
+              onClick={() => setShowServerPanel(!showServerPanel)} 
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#6a7bfd22] to-[#2ec8fa22] border border-[#6a7bfd44] hover:border-[#4dc9fa] text-[#e5eaff] hover:text-[#4dc9fa] transition-all duration-300 rounded-lg text-xs font-medium"
+            >
+              <Server size={14} />
+              <span className="hidden sm:inline">Sunucular</span>
+              <ChevronDown size={12} className="text-[#7c8dbb]" />
             </button>
             <button onClick={handleLeaveRoom} className="text-[#eac073] hover:text-[#ffb300] transition-all duration-300 p-2 hover:bg-[#eac07322] rounded-lg" title="Odadan çık">
               <LogOut size={18} />
@@ -396,134 +400,79 @@ export default function VoiceChat() {
         <main className="flex-1 flex flex-col lg:items-center lg:justify-center px-2 sm:px-4 py-2 sm:py-6 overflow-hidden">
           <div className="w-full max-w-7xl flex flex-col lg:grid lg:grid-cols-12 lg:gap-4 flex-1 lg:flex-initial">
             
-            {/* Sol Sütun - Birleşik Panel */}
-            <div className={`lg:col-span-3 flex flex-col ${mobileTab !== 'participants' ? 'hidden lg:flex' : 'flex'}`} style={{minHeight: 0}}>
-              <div className="glass bg-gradient-to-br from-[#101320ee] to-[#23305b99] rounded-2xl shadow-2xl border border-[#23253a] flex flex-col backdrop-blur-xl overflow-hidden flex-1" style={{minHeight: 0}}>
-                
-                {/* Katılımcılar */}
-                <div className="p-3 flex-1 flex flex-col overflow-hidden" style={{minHeight: 0}}>
-                  <div className="flex items-center justify-between mb-2 flex-shrink-0">
-                    <h3 className="text-xs font-semibold text-[#aab7e7] tracking-wide uppercase select-none flex items-center gap-1.5">
-                      <Users size={12} />
-                      Katılımcılar
-                      <span className="text-[#2ec8fa] bg-[#2ec8fa15] px-1.5 py-0.5 rounded-full text-[10px] normal-case">{participants.length}</span>
-                    </h3>
-                    <button 
-                      onClick={() => setShowSettings(!showSettings)}
-                      className={`p-1.5 rounded-lg transition-all duration-200 ${showSettings ? 'text-[#2ec8fa] bg-[#2ec8fa15]' : 'text-[#7c8dbb] hover:text-[#aab7e7] hover:bg-[#ffffff08]'}`}
-                      title="Ayarlar"
-                    >
-                      <Settings size={13} />
-                    </button>
-                  </div>
-
-                  <div className="space-y-1.5 flex-1 overflow-y-auto scrollbar-thin" style={{minHeight: 0}}>
-                    {/* Mevcut kullanıcı */}
-                    {localParticipant && (
-                      <div className="flex items-center justify-between p-2 rounded-lg bg-[#2ec8fa08] border border-[#2ec8fa15]">
-                        <div className="flex items-center gap-2">
-                          <div className={`relative w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs text-white shadow bg-[#6a7bfd] transition-all duration-500 ${
-                            localParticipant.isSpeaking ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-[#101320]' : ''
-                          }`}>
-                            {localParticipant.identity?.charAt(0).toUpperCase()}
-                            {localParticipant.isSpeaking && <div className="absolute inset-0 rounded-full bg-green-400 opacity-25 animate-pulse"></div>}
-                            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full flex items-center justify-center">
-                              {isMuted ? (
-                                <div className="w-full h-full bg-red-500 rounded-full flex items-center justify-center shadow"><MicOff size={7} className="text-white" /></div>
-                              ) : (
-                                <div className={`w-full h-full rounded-full flex items-center justify-center shadow ${localParticipant.isSpeaking ? 'bg-green-400' : 'bg-green-500'}`}><Mic size={7} className="text-white" /></div>
-                              )}
-                            </div>
-                            {isDeafened && (
-                              <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center shadow"><VolumeX size={7} className="text-white" /></div>
+            {/* Sol Sütun - Katılımcılar + Kontroller */}
+            <div className={`lg:col-span-3 flex flex-col gap-2 ${mobileTab !== 'participants' ? 'hidden lg:flex' : 'flex'}`} style={{minHeight: 0}}>
+              <div className="glass bg-gradient-to-br from-[#101320ee] to-[#23305b99] rounded-2xl shadow-2xl border border-[#23253a] p-3 flex-1 flex flex-col backdrop-blur-xl overflow-hidden" style={{minHeight: 0}}>
+                <h3 className="text-sm font-semibold text-[#e5eaff] mb-2 tracking-tight select-none flex items-center gap-2 flex-shrink-0">
+                  <Users size={14} />
+                  <span>Katılımcılar</span>
+                  <span className="text-[#2ec8fa] bg-[#2ec8fa22] px-2 py-0.5 rounded-full text-xs">{participants.length}</span>
+                </h3>
+                <div className="space-y-2 flex-1 overflow-y-auto scrollbar-thin" style={{minHeight: 0}}>
+                  {/* Mevcut kullanıcı */}
+                  {localParticipant && (
+                    <div className="flex items-center justify-between p-2 bg-gradient-to-r from-[#2ec8fa22] to-[#eac07322] rounded-lg border border-[#2ec8fa33]">
+                      <div className="flex items-center gap-2">
+                        <div className={`relative w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg bg-[#6a7bfd] transition-all duration-500 ${
+                          localParticipant.isSpeaking ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-[#101320] scale-105' : ''
+                        }`}>
+                          {localParticipant.identity?.charAt(0).toUpperCase()}
+                          {localParticipant.isSpeaking && <div className="absolute inset-0 rounded-full bg-green-400 opacity-30 animate-pulse"></div>}
+                          <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center">
+                            {isMuted ? (
+                              <div className="w-full h-full bg-red-500 rounded-full flex items-center justify-center shadow-lg"><MicOff size={8} className="text-white" /></div>
+                            ) : (
+                              <div className={`w-full h-full rounded-full flex items-center justify-center shadow-lg ${localParticipant.isSpeaking ? 'bg-green-400' : 'bg-green-500'}`}><Mic size={8} className="text-white" /></div>
                             )}
                           </div>
-                          <div className="flex flex-col">
-                            <span className="font-semibold text-[#eac073] text-[11px] leading-tight">{localParticipant.identity}</span>
-                            {isPTTActive && <span className="text-[9px] text-green-400 leading-tight">🎙️ PTT</span>}
-                          </div>
+                          {isDeafened && (
+                            <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center shadow-lg"><VolumeX size={8} className="text-white" /></div>
+                          )}
                         </div>
-                        <span className="text-[9px] text-[#2ec8fa] font-medium bg-[#2ec8fa15] px-1.5 py-0.5 rounded-full">Sen</span>
-                      </div>
-                    )}
-
-                    {/* Diğer katılımcılar */}
-                    {remoteParticipants.map((p) => {
-                      const isRemoteMuted = !p.isMicrophoneEnabled;
-                      return (
-                      <div key={p.sid} className="flex flex-col gap-0.5 p-2 rounded-lg bg-[#ffffff04] hover:bg-[#ffffff08] border border-transparent hover:border-[#4dc9fa15] transition-all duration-300 group">
-                        <div className="flex items-center gap-2">
-                          <div className={`relative w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs text-white shadow bg-[#23305b] transition-all duration-500 ${
-                            p.isSpeaking ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-[#101320]' : ''
-                          }`}>
-                            {p.identity?.charAt(0).toUpperCase()}
-                            {p.isSpeaking && <div className="absolute inset-0 rounded-full bg-green-400 opacity-25 animate-pulse"></div>}
-                            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full flex items-center justify-center">
-                              {isRemoteMuted ? (
-                                <div className="w-full h-full bg-red-500 rounded-full flex items-center justify-center shadow"><MicOff size={7} className="text-white" /></div>
-                              ) : (
-                                <div className={`w-full h-full rounded-full flex items-center justify-center shadow ${p.isSpeaking ? 'bg-green-400' : 'bg-green-500'}`}><Mic size={7} className="text-white" /></div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <span className="font-medium text-[#e5eaff] group-hover:text-[#4dc9fa] transition-colors text-[11px] truncate leading-tight">{p.identity}</span>
-                            {isRemoteMuted && <span className="text-[9px] text-red-400/70 leading-tight">Sessiz</span>}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 pl-9 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Volume2 size={9} className="text-[#7c8dbb]" />
-                          <Slider defaultValue={[100]} max={100} step={1} className="w-full" onValueChange={(value) => setParticipantVolume(p.identity, value[0])} />
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-[#eac073] text-xs">{localParticipant.identity}</span>
+                          {isPTTActive && <span className="text-[10px] text-green-400">🎙️ PTT Aktif</span>}
                         </div>
                       </div>
-                      );
-                    })}
-                  </div>
+                      <span className="text-[10px] text-[#2ec8fa] font-medium bg-[#2ec8fa22] px-1.5 py-0.5 rounded-full">Sen</span>
+                    </div>
+                  )}
+                  
+                  {/* Diğer katılımcılar */}
+                  {remoteParticipants.map((p) => {
+                    const isRemoteMuted = !p.isMicrophoneEnabled;
+                    return (
+                    <div key={p.sid} className="flex flex-col gap-1 p-2 bg-[#15182a] rounded-lg border border-[#23253a] hover:border-[#4dc9fa33] transition-all duration-300 group">
+                      <div className="flex items-center gap-2">
+                        <div className={`relative w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg bg-[#23305b] transition-all duration-500 ${
+                          p.isSpeaking ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-[#101320] scale-105' : ''
+                        }`}>
+                          {p.identity?.charAt(0).toUpperCase()}
+                          {p.isSpeaking && <div className="absolute inset-0 rounded-full bg-green-400 opacity-30 animate-pulse"></div>}
+                          <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center">
+                            {isRemoteMuted ? (
+                              <div className="w-full h-full bg-red-500 rounded-full flex items-center justify-center shadow-lg"><MicOff size={8} className="text-white" /></div>
+                            ) : (
+                              <div className={`w-full h-full rounded-full flex items-center justify-center shadow-lg ${p.isSpeaking ? 'bg-green-400' : 'bg-green-500'}`}><Mic size={8} className="text-white" /></div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-[#e5eaff] group-hover:text-[#4dc9fa] transition-colors text-xs">{p.identity}</span>
+                          {isRemoteMuted && <span className="text-[10px] text-red-400">Mikrofon Kapalı</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 pl-8">
+                        <Volume2 size={10} className="text-[#aab7e7]" />
+                        <Slider defaultValue={[100]} max={100} step={1} className="w-full" onValueChange={(value) => setParticipantVolume(p.identity, value[0])} />
+                      </div>
+                    </div>
+                    );
+                  })}
                 </div>
-
-                {/* Ayarlar (Collapsible) */}
-                {showSettings && (
-                  <div className="px-3 pb-2 space-y-1.5 border-t border-[#ffffff08] pt-2">
-                    {audioDevices.length > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Mic size={11} className="text-[#7c8dbb] flex-shrink-0" />
-                        <select value={selectedAudioDevice} onChange={(e) => switchAudioDevice(e.target.value)} className="flex-1 bg-[#0f1422] text-[#e5eaff] text-[11px] rounded-lg px-2 py-1.5 border border-[#ffffff08] outline-none hover:border-[#4dc9fa22] transition-colors">
-                          {audioDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label || `Mikrofon ${d.deviceId.slice(0, 6)}`}</option>))}
-                        </select>
-                      </div>
-                    )}
-                    {audioOutputDevices.length > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Headphones size={11} className="text-[#7c8dbb] flex-shrink-0" />
-                        <select value={selectedOutputDevice} onChange={(e) => switchOutputDevice(e.target.value)} className="flex-1 bg-[#0f1422] text-[#e5eaff] text-[11px] rounded-lg px-2 py-1.5 border border-[#ffffff08] outline-none hover:border-[#4dc9fa22] transition-colors">
-                          {audioOutputDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label || `Hoparlör ${d.deviceId.slice(0, 6)}`}</option>))}
-                        </select>
-                      </div>
-                    )}
-                    {pttEnabled && (
-                      <div className="flex items-center gap-2">
-                        <Keyboard size={11} className="text-[#7c8dbb] flex-shrink-0" />
-                        {pttKeyBinding ? (
-                          <div className="flex-1 text-[11px] text-[#eac073] text-center py-1.5 animate-pulse">Bir tuşa bas...</div>
-                        ) : (
-                          <button 
-                            onClick={() => {
-                              setPttKeyBinding(true);
-                              const handler = (e: KeyboardEvent) => { e.preventDefault(); setPTTKey(e.code); setPttKeyBinding(false); document.removeEventListener('keydown', handler); };
-                              document.addEventListener('keydown', handler);
-                            }}
-                            className="flex-1 bg-[#0f1422] text-[#e5eaff] text-[11px] rounded-lg px-2 py-1.5 border border-[#ffffff08] hover:border-[#4dc9fa22] transition-colors text-center"
-                          >
-                            PTT: {pttKey.replace('Key', '').replace('Space', 'Boşluk')}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Ses Kontrolleri - Alt Bar */}
-                <div className="flex-shrink-0 px-2 py-2 border-t border-[#ffffff08]">
+                
+                {/* Kontroller - inline dropdownlar VoiceControls içinde */}
+                <div className="mt-3 flex-shrink-0">
                   <VoiceControls 
                     isMuted={isMuted} 
                     isDeafened={isDeafened} 
@@ -532,12 +481,20 @@ export default function VoiceChat() {
                     pttEnabled={pttEnabled}
                     togglePTT={togglePTT}
                     isPTTActive={isPTTActive}
+                    audioDevices={audioDevices}
+                    audioOutputDevices={audioOutputDevices}
+                    selectedAudioDevice={selectedAudioDevice}
+                    selectedOutputDevice={selectedOutputDevice}
+                    switchAudioDevice={switchAudioDevice}
+                    switchOutputDevice={switchOutputDevice}
+                    pttKey={pttKey}
+                    setPTTKey={setPTTKey}
                   />
                 </div>
               </div>
 
               {/* Ses Paneli */}
-              <div className="flex-shrink-0 mt-2">
+              <div className="flex-shrink-0">
                 <SoundManager 
                   currentUser={musicPlayerUser}
                   roomId={serverName || 'default-room'}
@@ -603,6 +560,8 @@ const chatStyles = `
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
   .animate-slideIn { animation: slideIn 0.3s ease-out; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fadeUp { animation: fadeUp 0.15s ease-out; }
   .scrollbar-thin { scrollbar-width: thin; }
   .scrollbar-thin::-webkit-scrollbar { width: 4px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #4dc9fa44; border-radius: 10px; }
