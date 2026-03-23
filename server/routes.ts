@@ -279,7 +279,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // YouTube API endpoint
+  // YouTube arama endpoint - Invidious API kullanır (API key gerektirmez)
   app.get("/api/youtube/search", async (req, res) => {
     try {
       const { q } = req.query;
@@ -288,26 +288,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Query parameter 'q' is required" });
       }
 
-      const YOUTUBE_API_KEY = process.env.VITE_YOUTUBE_API_KEY || process.env.YOUTUBE_API_KEY;
-      
-      if (!YOUTUBE_API_KEY) {
-        console.error("YouTube API key not found");
-        return res.status(500).json({ message: "YouTube API not configured" });
+      console.log(`🎵 Searching YouTube (via Invidious) for: ${q}`);
+
+      // Birden fazla Invidious instance - failover için
+      const invidiousInstances = [
+        'https://vid.puffyan.us',
+        'https://invidious.fdn.fr',
+        'https://invidious.privacyredirect.com',
+        'https://iv.ggtyler.dev',
+        'https://invidious.protokolla.fi',
+      ];
+
+      let lastError: any = null;
+
+      for (const instance of invidiousInstances) {
+        try {
+          const url = `${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video&sort_by=relevance`;
+          console.log(`🎵 Trying Invidious instance: ${instance}`);
+          
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 8000); // 8 saniye timeout
+          
+          const response = await fetch(url, { 
+            signal: controller.signal,
+            headers: {
+              'Accept': 'application/json',
+            }
+          });
+          clearTimeout(timeout);
+          
+          if (!response.ok) {
+            throw new Error(`Invidious API error: ${response.status}`);
+          }
+          
+          const results = await response.json();
+          
+          if (results && Array.isArray(results) && results.length > 0) {
+            // İlk video sonucunu bul
+            const video = results.find((r: any) => r.type === 'video');
+            if (!video) {
+              throw new Error('No video results found');
+            }
+
+            // YouTube Data API formatına dönüştür (client uyumu için)
+            const formattedData = {
+              items: [{
+                id: { videoId: video.videoId },
+                snippet: {
+                  title: video.title,
+                  channelTitle: video.author || 'Bilinmeyen Sanatçı',
+                  thumbnails: {
+                    medium: {
+                      url: video.videoThumbnails?.[0]?.url || 
+                           `https://i.ytimg.com/vi/${video.videoId}/mqdefault.jpg`
+                    }
+                  }
+                }
+              }]
+            };
+            
+            console.log(`🎵 Found video: ${video.title} (${video.videoId})`);
+            return res.json(formattedData);
+          }
+        } catch (instanceError: any) {
+          console.warn(`🎵 Invidious instance ${instance} failed:`, instanceError.message);
+          lastError = instanceError;
+          continue; // Sonraki instance'ı dene
+        }
       }
 
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=${encodeURIComponent(q)}&type=video&key=${YOUTUBE_API_KEY}`;
-      
-      console.log(`Searching YouTube for: ${q}`);
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
+      // Hiçbir instance çalışmadıysa, YouTube Data API'yi yedek olarak dene
+      const YOUTUBE_API_KEY = process.env.VITE_YOUTUBE_API_KEY || process.env.YOUTUBE_API_KEY;
+      if (YOUTUBE_API_KEY) {
+        try {
+          const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=${encodeURIComponent(q)}&type=video&key=${YOUTUBE_API_KEY}`;
+          const response = await fetch(url);
+          if (response.ok) {
+            const data = await response.json();
+            console.log(`🎵 YouTube Data API fallback returned ${data.items?.length || 0} results`);
+            return res.json(data);
+          }
+        } catch (ytError) {
+          console.warn('🎵 YouTube Data API fallback also failed');
+        }
       }
-      
-      const data = await response.json();
-      console.log(`YouTube search results: ${data.items?.length || 0} items found`);
-      
-      res.json(data);
+
+      throw lastError || new Error('All search instances failed');
     } catch (error: any) {
       console.error("YouTube search error:", error);
       res.status(500).json({ message: "Failed to search YouTube", error: error.message });

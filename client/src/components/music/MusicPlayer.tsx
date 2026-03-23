@@ -664,13 +664,51 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
 
       {/* Player */}
       <div className="relative z-10 mb-4">
-        {/* YouTube Player Container */}
+        {/* YouTube Player Container - gizli, sadece ses çalar */}
         <div className="relative mb-3">
           <div 
             ref={playerRef} 
-            className="w-full rounded-xl overflow-hidden shadow-lg border border-[#4dc9fa22]"
-            style={{ aspectRatio: '16/9' }}
+            style={{ display: 'none' }}
           ></div>
+          
+          {/* Görsel: Albüm kapağı stili */}
+          {currentSong ? (
+            <div className="relative rounded-xl overflow-hidden shadow-lg border border-[#4dc9fa22] bg-[#0f1422] p-4">
+              <div className="flex items-center gap-4">
+                <div className="relative flex-shrink-0">
+                  <img 
+                    src={currentSong.thumbnail} 
+                    alt={currentSong.title} 
+                    className="w-20 h-20 rounded-lg object-cover shadow-md" 
+                  />
+                  {isPlaying && (
+                    <div className="absolute inset-0 bg-[#4dc9fa22] rounded-lg flex items-center justify-center">
+                      <div className="flex items-center gap-0.5">
+                        <div className="w-1 h-4 bg-[#4dc9fa] rounded-full animate-pulse" style={{animationDelay: '0ms'}}></div>
+                        <div className="w-1 h-6 bg-[#4dc9fa] rounded-full animate-pulse" style={{animationDelay: '150ms'}}></div>
+                        <div className="w-1 h-3 bg-[#4dc9fa] rounded-full animate-pulse" style={{animationDelay: '300ms'}}></div>
+                        <div className="w-1 h-5 bg-[#4dc9fa] rounded-full animate-pulse" style={{animationDelay: '100ms'}}></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[#e5eaff] font-medium text-sm truncate">{currentSong.title}</p>
+                  <p className="text-[#aab7e7] text-xs truncate mt-1">{currentSong.artist}</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className={`w-1.5 h-1.5 rounded-full ${isPlaying ? 'bg-[#4dc9fa] animate-pulse' : 'bg-[#7c8dbb]'}`}></div>
+                    <span className="text-[#7c8dbb] text-xs">{isPlaying ? 'Çalıyor' : 'Duraklatıldı'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-[#4dc9fa22] bg-[#0f1422] p-6 text-center">
+              <Music className="h-8 w-8 mx-auto mb-2 text-[#4dc9fa] opacity-50" />
+              <p className="text-[#aab7e7] text-sm">Şarkı arayın ve çalmaya başlayın</p>
+            </div>
+          )}
+          
           {!isReady && (
             <div className="absolute inset-0 bg-[#0f1422cc] backdrop-blur-sm rounded-xl flex items-center justify-center">
               <div className="text-center">
@@ -681,22 +719,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
           )}
         </div>
         
-        {/* Şarkı Bilgisi */}
-        {currentSong && (
-          <div className="bg-[#0f1422aa] rounded-lg p-3 mb-3 border border-[#4dc9fa22] backdrop-blur-sm">
-            <div className="flex items-center gap-3">
-              <img src={currentSong.thumbnail} alt={currentSong.title} className="w-12 h-12 rounded-lg object-cover shadow-md" />
-              <div className="flex-1 min-w-0">
-                <p className="text-[#e5eaff] font-medium truncate text-sm">{currentSong.title}</p>
-                <p className="text-[#aab7e7] text-xs truncate">{currentSong.artist}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#4dc9fa] animate-pulse"></div>
-                  <span className="text-[#7c8dbb] text-xs">Çalıyor</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+
         
         {/* Kontroller */}
         <div className="flex items-center justify-center gap-4 mb-3">

@@ -23,18 +23,18 @@ import {
 export type Sound = {
   id: string;
   name: string;
-  file: File;
+  file?: File; // Lokal yükleme için (opsiyonel - server'dan gelirse olmayabilir)
   url: string;
   assignedKey?: string;
   duration?: number;
-  volume?: number; // Kişisel ses seviyesi
+  volume?: number;
 };
 
 interface SoundManagerProps {
   currentUser: { full_name: string } | null;
   roomId?: string;
   userId?: string;
-  isDeafened?: boolean; // Sağırlaştırma durumu
+  isDeafened?: boolean;
 }
 
 const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, userId, isDeafened }) => {
@@ -46,28 +46,89 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // playSound/stopSound'u ref ile tut - stale closure sorununu çözer
+  const playSoundRef = useRef<(soundId: string, sync?: boolean) => void>(() => {});
+  const stopSoundRef = useRef<(soundId: string, sync?: boolean) => void>(() => {});
+
   // Ses senkronizasyonu
-  const { sendPlaySoundCommand, sendStopSoundCommand } = useSoundSync({
+  const { sendPlaySoundCommand, sendStopSoundCommand, uploadSoundFile } = useSoundSync({
     roomId: roomId || 'default-room',
     userId: userId || 'anonymous',
     onPlaySound: (soundId, userId) => {
       console.log(`Remote play sound from ${userId}:`, soundId);
-      playSound(soundId, false); // Remote komut olduğu için senkronizasyon gönderme
+      playSoundRef.current(soundId, false);
     },
     onStopSound: (soundId, userId) => {
       console.log(`Remote stop sound from ${userId}:`, soundId);
-      stopSound(soundId, false); // Remote komut olduğu için senkronizasyon gönderme
+      stopSoundRef.current(soundId, false);
+    },
+    onStateUpdate: (state) => {
+      // Server'dan gelen soundboard state - sesleri geri yükle
+      if (state && state.sounds && Array.isArray(state.sounds)) {
+        console.log('🔊 Loading sounds from server state:', state.sounds.length);
+        const serverSounds: Sound[] = state.sounds.map((s: any) => {
+          const soundUrl = s.path || s.url;
+          
+          // Audio referansı oluştur (eğer yoksa)
+          if (!audioRefs.current[s.id]) {
+            const audio = new Audio(soundUrl);
+            audio.addEventListener('loadedmetadata', () => {
+              // duration bilgisi geldiğinde state'i güncelle
+              setSounds(prev => prev.map(sound => 
+                sound.id === s.id ? { ...sound, duration: audio.duration } : sound
+              ));
+            });
+            audio.addEventListener('ended', () => {
+              setPlayingSounds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(s.id);
+                return newSet;
+              });
+            });
+            audioRefs.current[s.id] = audio;
+          }
+          
+          return {
+            id: s.id,
+            name: s.name || s.filename || 'Bilinmeyen Ses',
+            url: soundUrl,
+            duration: s.duration,
+            volume: s.volume || 100,
+          };
+        });
+        
+        setSounds(prev => {
+          // Zaten olan sesleri güncelleme, yeni olanları ekle
+          const existingIds = new Set(prev.map(s => s.id));
+          const newSounds = serverSounds.filter(s => !existingIds.has(s.id));
+          if (newSounds.length > 0) {
+            return [...prev, ...newSounds];
+          }
+          return prev;
+        });
+      }
     }
   });
 
   // Klavye kısayolu yönetimi
   useEffect(() => {
     const handleKeyPress = (event: KeyboardEvent) => {
+      // ESC ile tuş atamayı iptal et
+      if (isListening && event.code === 'Escape') {
+        event.preventDefault();
+        setIsListening(false);
+        setSoundToAssign(null);
+        toast({
+          title: "İptal edildi",
+          description: "Tuş atama iptal edildi",
+        });
+        return;
+      }
+
       if (isListening && soundToAssign) {
-        // Tuş atama modu
         event.preventDefault();
         const keyName = formatKeyName(event.code);
-        assignKeyToSound(soundToAssign.id, keyName);
+        assignKeyToSound(soundToAssign.id, event.code);
         setIsListening(false);
         setSoundToAssign(null);
         return;
@@ -77,7 +138,7 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
       const sound = sounds.find(s => s.assignedKey === event.code);
       if (sound) {
         event.preventDefault();
-        playSound(sound.id);
+        playSoundRef.current(sound.id);
       }
     };
 
@@ -85,13 +146,12 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
     return () => document.removeEventListener('keydown', handleKeyPress);
   }, [isListening, soundToAssign, sounds]);
 
-  // Dosya yükleme
+  // Dosya yükleme - server'a yükle
   const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
     setIsUploading(true);
-    const newSounds: Sound[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -117,33 +177,46 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
       }
 
       try {
-        const soundId = `sound_${Date.now()}_${i}`;
-        const url = URL.createObjectURL(file);
+        // Server'a yükle
+        const result = await uploadSoundFile(file);
         
-        // Ses süresini al
-        const audio = new Audio(url);
-        const duration = await new Promise<number>((resolve) => {
-          audio.addEventListener('loadedmetadata', () => resolve(audio.duration));
-          audio.addEventListener('error', () => resolve(0));
-        });
+        if (result && result.sound) {
+          const serverSound = result.sound;
+          const soundUrl = serverSound.path || serverSound.url;
+          
+          // Audio referansı oluştur
+          const audio = new Audio(soundUrl);
+          const duration = await new Promise<number>((resolve) => {
+            audio.addEventListener('loadedmetadata', () => resolve(audio.duration));
+            audio.addEventListener('error', () => resolve(0));
+          });
+          
+          // Ses bittiğinde otomatik olarak çalıyor durumunu kaldır
+          audio.addEventListener('ended', () => {
+            setPlayingSounds(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(serverSound.id);
+              return newSet;
+            });
+          });
 
-        const sound: Sound = {
-          id: soundId,
-          name: file.name.replace(/\.[^/.]+$/, ""), // Uzantıyı kaldır
-          file,
-          url,
-          duration
-        };
+          const sound: Sound = {
+            id: serverSound.id,
+            name: file.name.replace(/\.[^/.]+$/, ""),
+            file,
+            url: soundUrl,
+            duration,
+            volume: 100,
+          };
 
-        newSounds.push(sound);
-        
-        // Audio referansını oluştur
-        audioRefs.current[soundId] = audio;
-        
-        toast({
-          title: "Ses yüklendi",
-          description: `${sound.name} başarıyla eklendi`,
-        });
+          audioRefs.current[serverSound.id] = audio;
+          setSounds(prev => [...prev, sound]);
+          
+          toast({
+            title: "Ses yüklendi",
+            description: `${sound.name} başarıyla eklendi`,
+          });
+        }
       } catch (error) {
         console.error('Ses yükleme hatası:', error);
         toast({
@@ -154,28 +227,24 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
       }
     }
 
-    setSounds(prev => [...prev, ...newSounds]);
     setIsUploading(false);
     
     // Input'u temizle
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, []);
+  }, [uploadSoundFile]);
 
   // Ses çalma
   const playSound = useCallback((soundId: string, sync: boolean = true) => {
     const audio = audioRefs.current[soundId];
     if (!audio) return;
 
-    // Sağırlaştırma durumunda ses çalma
     if (isDeafened) {
-      console.log('Sağırlaştırma durumunda ses çalınmıyor');
       return;
     }
 
     if (playingSounds.has(soundId)) {
-      // Ses çalıyorsa durdur
       audio.pause();
       audio.currentTime = 0;
       setPlayingSounds(prev => {
@@ -188,12 +257,10 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
         sendStopSoundCommand(soundId);
       }
     } else {
-      // Ses seviyesini ayarla
       const sound = sounds.find(s => s.id === soundId);
       const volume = sound?.volume !== undefined ? sound.volume / 100 : 1;
       audio.volume = volume;
       
-      // Sesi çal
       audio.play().then(() => {
         setPlayingSounds(prev => new Set(prev).add(soundId));
         
@@ -229,24 +296,31 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
     }
   }, [roomId, userId, sendStopSoundCommand]);
 
+  // Ref'leri güncelle - stale closure sorununu çöz
+  useEffect(() => {
+    playSoundRef.current = playSound;
+  }, [playSound]);
+
+  useEffect(() => {
+    stopSoundRef.current = stopSound;
+  }, [stopSound]);
+
   // Ses silme
   const deleteSound = useCallback((soundId: string) => {
     const sound = sounds.find(s => s.id === soundId);
     if (!sound) return;
 
-    // Çalmakta olan sesi durdur
     stopSound(soundId, false);
     
-    // Audio referansını temizle
     if (audioRefs.current[soundId]) {
       audioRefs.current[soundId].src = '';
       delete audioRefs.current[soundId];
     }
     
-    // Object URL'i temizle
-    URL.revokeObjectURL(sound.url);
+    if (sound.url.startsWith('blob:')) {
+      URL.revokeObjectURL(sound.url);
+    }
     
-    // Listeden kaldır
     setSounds(prev => prev.filter(s => s.id !== soundId));
     
     toast({
@@ -261,7 +335,7 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
     setSoundToAssign(sound);
     toast({
       title: "Tuş atama",
-      description: "Bir tuşa basın...",
+      description: "Bir tuşa basın... (ESC ile iptal)",
     });
   }, []);
 
@@ -319,7 +393,6 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
       return keyMap[keyCode];
     }
 
-    // KeyA -> A, Digit1 -> 1
     if (keyCode.startsWith('Key')) {
       return keyCode.slice(3);
     }
@@ -345,7 +418,6 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
         : sound
     ));
     
-    // Eğer ses çalıyorsa hemen ses seviyesini güncelle
     const audio = audioRefs.current[soundId];
     if (audio) {
       audio.volume = volume / 100;
@@ -538,4 +610,4 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
 
 SoundManager.displayName = "SoundManager";
 
-export default SoundManager; 
+export default SoundManager;

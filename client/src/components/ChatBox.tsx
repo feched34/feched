@@ -42,49 +42,30 @@ const ChatBox: React.FC<ChatBoxProps> = memo(({ currentUser, users, roomId }) =>
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // WebSocket ile sohbet senkronizasyonu
-  const { sendMessage: sendWebSocketMessage, loadChatHistory } = useChatSync({
+  const { sendMessage: sendWebSocketMessage } = useChatSync({
     roomId,
     userId: currentUser.id,
     userName: currentUser.name,
     userAvatar: currentUser.avatar,
     onMessageReceived: (message: Message) => {
-      // Tüm mesajları al - kendi mesajlarımız da görünsün
-      console.log('💬 onMessageReceived called with:', message);
-      console.log('💬 Message user:', message.user.name);
-      console.log('💬 Message content:', message.content);
-      console.log('💬 Current messages count:', messages.length);
-      
       setMessages(prev => {
-        console.log('💬 Adding message to state, new count will be:', prev.length + 1);
+        // Duplike mesaj kontrolü
+        if (prev.some(m => m.id === message.id)) return prev;
         return [...prev, message];
       });
     },
     onHistoryReceived: (historyMessages: Message[]) => {
-      console.log('💬 Loading chat history:', historyMessages.length, 'messages');
       setMessages(historyMessages);
     }
   });
 
-  // Sayfa yüklendiğinde sohbet geçmişini yükle
-  useEffect(() => {
-    loadChatHistory();
-  }, [loadChatHistory]);
-
-  // Mesaj gönder - useCallback ile optimize et
+  // Mesaj gönder
   const sendMessage = useCallback(() => {
     if (!input.trim()) return;
-    
-    console.log('💬 Sending message:', input);
-    console.log('💬 Current user:', currentUser);
-    console.log('💬 Room ID:', roomId);
-    
-    // Sadece WebSocket ile gönder - yerel ekleme yok
-    // Mesaj server'dan geri gelecek ve orada eklenecek
     sendWebSocketMessage(input);
-    
     setInput('');
     setShowEmojis(false);
-  }, [input, sendWebSocketMessage, currentUser, roomId]);
+  }, [input, sendWebSocketMessage]);
 
   // Emoji ekle - useCallback ile optimize et
   const addEmoji = useCallback((emoji: string) => {
