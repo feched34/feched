@@ -1,34 +1,87 @@
 import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
-import { Card } from './ui/card';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { ScrollArea } from './ui/scroll-area';
 import { Slider } from './ui/slider';
 import { toast } from '../hooks/use-toast';
 import { useSoundSync } from '../hooks/use-sound-sync';
-import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  FileAudio, 
-  Upload, 
-  Play, 
-  Pause, 
-  Trash2, 
-  Keyboard, 
-  Volume2,
-  Loader2,
-  X
+  FileAudio, Upload, Play, Pause, Trash2, Keyboard, Volume2, Loader2, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 // Ses tipi
 export type Sound = {
   id: string;
   name: string;
-  file?: File; // Lokal yükleme için (opsiyonel - server'dan gelirse olmayabilir)
+  file?: File;
   url: string;
   assignedKey?: string;
   duration?: number;
   volume?: number;
 };
+
+// IndexedDB helpers
+const DB_NAME = 'goccord_sounds';
+const DB_VERSION = 1;
+const STORE_NAME = 'sounds';
+
+function openSoundDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveSoundToDB(sound: { id: string; name: string; data: ArrayBuffer; assignedKey?: string; volume?: number }) {
+  const db = await openSoundDB();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(sound);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getAllSoundsFromDB(): Promise<{ id: string; name: string; data: ArrayBuffer; assignedKey?: string; volume?: number }[]> {
+  const db = await openSoundDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deleteSoundFromDB(id: string) {
+  const db = await openSoundDB();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function updateSoundMetaInDB(id: string, meta: { assignedKey?: string; volume?: number }) {
+  const db = await openSoundDB();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      if (getReq.result) {
+        store.put({ ...getReq.result, ...meta });
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
 
 interface SoundManagerProps {
   currentUser: { full_name: string } | null;
@@ -43,568 +96,307 @@ const SoundManager: React.FC<SoundManagerProps> = memo(({ currentUser, roomId, u
   const [isListening, setIsListening] = useState(false);
   const [soundToAssign, setSoundToAssign] = useState<Sound | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // playSound/stopSound'u ref ile tut - stale closure sorununu çözer
   const playSoundRef = useRef<(soundId: string, sync?: boolean) => void>(() => {});
   const stopSoundRef = useRef<(soundId: string, sync?: boolean) => void>(() => {});
 
-  // Ses senkronizasyonu
+  // Load sounds from IndexedDB on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await getAllSoundsFromDB();
+        const loaded: Sound[] = [];
+        for (const s of stored) {
+          const blob = new Blob([s.data]);
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.addEventListener('ended', () => {
+            setPlayingSounds(prev => { const n = new Set(prev); n.delete(s.id); return n; });
+          });
+          audioRefs.current[s.id] = audio;
+          const duration = await new Promise<number>(res => {
+            audio.addEventListener('loadedmetadata', () => res(audio.duration));
+            audio.addEventListener('error', () => res(0));
+          });
+          loaded.push({ id: s.id, name: s.name, url, duration, volume: s.volume ?? 100, assignedKey: s.assignedKey });
+        }
+        if (loaded.length > 0) setSounds(loaded);
+      } catch (e) { console.error('IndexedDB load error:', e); }
+    })();
+  }, []);
+
+  // Sound sync hook
   const { sendPlaySoundCommand, sendStopSoundCommand, uploadSoundFile } = useSoundSync({
     roomId: roomId || 'default-room',
     userId: userId || 'anonymous',
-    onPlaySound: (soundId, userId) => {
-      console.log(`Remote play sound from ${userId}:`, soundId);
-      playSoundRef.current(soundId, false);
-    },
-    onStopSound: (soundId, userId) => {
-      console.log(`Remote stop sound from ${userId}:`, soundId);
-      stopSoundRef.current(soundId, false);
-    },
+    onPlaySound: (soundId) => { playSoundRef.current(soundId, false); },
+    onStopSound: (soundId) => { stopSoundRef.current(soundId, false); },
     onStateUpdate: (state) => {
-      // Server'dan gelen soundboard state - sesleri geri yükle
-      if (state && state.sounds && Array.isArray(state.sounds)) {
-        console.log('🔊 Loading sounds from server state:', state.sounds.length);
+      if (state?.sounds && Array.isArray(state.sounds)) {
         const serverSounds: Sound[] = state.sounds.map((s: any) => {
           const soundUrl = s.path || s.url;
-          
-          // Audio referansı oluştur (eğer yoksa)
           if (!audioRefs.current[s.id]) {
             const audio = new Audio(soundUrl);
             audio.addEventListener('loadedmetadata', () => {
-              // duration bilgisi geldiğinde state'i güncelle
-              setSounds(prev => prev.map(sound => 
-                sound.id === s.id ? { ...sound, duration: audio.duration } : sound
-              ));
+              setSounds(prev => prev.map(sound => sound.id === s.id ? { ...sound, duration: audio.duration } : sound));
             });
             audio.addEventListener('ended', () => {
-              setPlayingSounds(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(s.id);
-                return newSet;
-              });
+              setPlayingSounds(prev => { const n = new Set(prev); n.delete(s.id); return n; });
             });
             audioRefs.current[s.id] = audio;
           }
-          
-          return {
-            id: s.id,
-            name: s.name || s.filename || 'Bilinmeyen Ses',
-            url: soundUrl,
-            duration: s.duration,
-            volume: s.volume || 100,
-          };
+          return { id: s.id, name: s.name || s.filename || 'Unknown', url: soundUrl, duration: s.duration, volume: s.volume || 100 };
         });
-        
         setSounds(prev => {
-          // Zaten olan sesleri güncelleme, yeni olanları ekle
-          const existingIds = new Set(prev.map(s => s.id));
-          const newSounds = serverSounds.filter(s => !existingIds.has(s.id));
-          if (newSounds.length > 0) {
-            return [...prev, ...newSounds];
-          }
-          return prev;
+          const ids = new Set(prev.map(s => s.id));
+          const newOnes = serverSounds.filter(s => !ids.has(s.id));
+          return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
         });
       }
     }
   });
 
-  // Klavye kısayolu yönetimi
+  // Keyboard handler
   useEffect(() => {
-    const handleKeyPress = (event: KeyboardEvent) => {
-      // ESC ile tuş atamayı iptal et
-      if (isListening && event.code === 'Escape') {
-        event.preventDefault();
-        setIsListening(false);
-        setSoundToAssign(null);
-        toast({
-          title: "İptal edildi",
-          description: "Tuş atama iptal edildi",
-        });
-        return;
-      }
-
+    const handler = (e: KeyboardEvent) => {
+      if (isListening && e.code === 'Escape') { e.preventDefault(); setIsListening(false); setSoundToAssign(null); return; }
       if (isListening && soundToAssign) {
-        event.preventDefault();
-        const keyName = formatKeyName(event.code);
-        assignKeyToSound(soundToAssign.id, event.code);
+        e.preventDefault();
+        assignKeyToSound(soundToAssign.id, e.code);
         setIsListening(false);
         setSoundToAssign(null);
         return;
       }
-
-      // Normal ses çalma modu
-      const sound = sounds.find(s => s.assignedKey === event.code);
-      if (sound) {
-        event.preventDefault();
-        playSoundRef.current(sound.id);
-      }
+      const sound = sounds.find(s => s.assignedKey === e.code);
+      if (sound) { e.preventDefault(); playSoundRef.current(sound.id); }
     };
-
-    document.addEventListener('keydown', handleKeyPress);
-    return () => document.removeEventListener('keydown', handleKeyPress);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, [isListening, soundToAssign, sounds]);
 
-  // Dosya yükleme - server'a yükle
+  // File upload — save to IndexedDB + server
   const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
-
     setIsUploading(true);
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      
-      // Dosya tipi kontrolü
-      if (!file.type.startsWith('audio/')) {
-        toast({
-          title: "Geçersiz dosya",
-          description: `${file.name} bir ses dosyası değil`,
-          variant: "destructive",
-        });
-        continue;
-      }
-
-      // Dosya boyutu kontrolü (10MB limit)
-      if (file.size > 10 * 1024 * 1024) {
-        toast({
-          title: "Dosya çok büyük",
-          description: `${file.name} 10MB'dan küçük olmalı`,
-          variant: "destructive",
-        });
-        continue;
-      }
+      if (!file.type.startsWith('audio/')) { toast({ title: "Geçersiz dosya", description: `${file.name} bir ses dosyası değil`, variant: "destructive" }); continue; }
+      if (file.size > 10 * 1024 * 1024) { toast({ title: "Dosya çok büyük", description: `${file.name} 10MB limit`, variant: "destructive" }); continue; }
 
       try {
-        // Server'a yükle
-        const result = await uploadSoundFile(file);
-        
-        if (result && result.sound) {
-          const serverSound = result.sound;
-          const soundUrl = serverSound.path || serverSound.url;
-          
-          // Audio referansı oluştur
-          const audio = new Audio(soundUrl);
-          const duration = await new Promise<number>((resolve) => {
-            audio.addEventListener('loadedmetadata', () => resolve(audio.duration));
-            audio.addEventListener('error', () => resolve(0));
-          });
-          
-          // Ses bittiğinde otomatik olarak çalıyor durumunu kaldır
-          audio.addEventListener('ended', () => {
-            setPlayingSounds(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(serverSound.id);
-              return newSet;
-            });
-          });
-
-          const sound: Sound = {
-            id: serverSound.id,
-            name: file.name.replace(/\.[^/.]+$/, ""),
-            file,
-            url: soundUrl,
-            duration,
-            volume: 100,
-          };
-
-          audioRefs.current[serverSound.id] = audio;
-          setSounds(prev => [...prev, sound]);
-          
-          toast({
-            title: "Ses yüklendi",
-            description: `${sound.name} başarıyla eklendi`,
-          });
-        }
-      } catch (error) {
-        console.error('Ses yükleme hatası:', error);
-        toast({
-          title: "Yükleme hatası",
-          description: `${file.name} yüklenirken hata oluştu`,
-          variant: "destructive",
+        const arrayBuffer = await file.arrayBuffer();
+        const blob = new Blob([arrayBuffer], { type: file.type });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        const duration = await new Promise<number>(res => {
+          audio.addEventListener('loadedmetadata', () => res(audio.duration));
+          audio.addEventListener('error', () => res(0));
         });
+        audio.addEventListener('ended', () => {
+          setPlayingSounds(prev => { const n = new Set(prev); n.delete(soundId); return n; });
+        });
+
+        const soundId = `local_${Date.now()}_${i}`;
+        audioRefs.current[soundId] = audio;
+
+        const soundName = file.name.replace(/\.[^/.]+$/, "");
+        const sound: Sound = { id: soundId, name: soundName, url, duration, volume: 100 };
+        setSounds(prev => [...prev, sound]);
+
+        // Save to IndexedDB
+        await saveSoundToDB({ id: soundId, name: soundName, data: arrayBuffer, volume: 100 });
+
+        // Also upload to server for sync
+        try { await uploadSoundFile(file); } catch {}
+
+        toast({ title: "Ses yüklendi", description: `${soundName} kaydedildi` });
+      } catch (error) {
+        console.error('Upload error:', error);
+        toast({ title: "Hata", description: `${file.name} yüklenemedi`, variant: "destructive" });
       }
     }
-
     setIsUploading(false);
-    
-    // Input'u temizle
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }, [uploadSoundFile]);
 
-  // Ses çalma
+  // Play sound
   const playSound = useCallback((soundId: string, sync: boolean = true) => {
     const audio = audioRefs.current[soundId];
-    if (!audio) return;
-
-    if (isDeafened) {
-      return;
-    }
+    if (!audio || isDeafened) return;
 
     if (playingSounds.has(soundId)) {
-      audio.pause();
-      audio.currentTime = 0;
-      setPlayingSounds(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(soundId);
-        return newSet;
-      });
-      
-      if (sync && roomId && userId) {
-        sendStopSoundCommand(soundId);
-      }
+      audio.pause(); audio.currentTime = 0;
+      setPlayingSounds(prev => { const n = new Set(prev); n.delete(soundId); return n; });
+      if (sync && roomId && userId) sendStopSoundCommand(soundId);
     } else {
       const sound = sounds.find(s => s.id === soundId);
-      const volume = sound?.volume !== undefined ? sound.volume / 100 : 1;
-      audio.volume = volume;
-      
+      audio.volume = (sound?.volume ?? 100) / 100;
       audio.play().then(() => {
         setPlayingSounds(prev => new Set(prev).add(soundId));
-        
-        if (sync && roomId && userId) {
-          sendPlaySoundCommand(soundId);
-        }
-      }).catch(error => {
-        console.error('Ses çalma hatası:', error);
-        toast({
-          title: "Çalma hatası",
-          description: "Ses çalınırken hata oluştu",
-          variant: "destructive",
-        });
-      });
+        if (sync && roomId && userId) sendPlaySoundCommand(soundId);
+      }).catch(() => toast({ title: "Çalma hatası", variant: "destructive" }));
     }
   }, [playingSounds, roomId, userId, sendPlaySoundCommand, sendStopSoundCommand, isDeafened, sounds]);
 
-  // Ses durdurma
   const stopSound = useCallback((soundId: string, sync: boolean = true) => {
     const audio = audioRefs.current[soundId];
     if (!audio) return;
-
-    audio.pause();
-    audio.currentTime = 0;
-    setPlayingSounds(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(soundId);
-      return newSet;
-    });
-    
-    if (sync && roomId && userId) {
-      sendStopSoundCommand(soundId);
-    }
+    audio.pause(); audio.currentTime = 0;
+    setPlayingSounds(prev => { const n = new Set(prev); n.delete(soundId); return n; });
+    if (sync && roomId && userId) sendStopSoundCommand(soundId);
   }, [roomId, userId, sendStopSoundCommand]);
 
-  // Ref'leri güncelle - stale closure sorununu çöz
-  useEffect(() => {
-    playSoundRef.current = playSound;
-  }, [playSound]);
+  useEffect(() => { playSoundRef.current = playSound; }, [playSound]);
+  useEffect(() => { stopSoundRef.current = stopSound; }, [stopSound]);
 
-  useEffect(() => {
-    stopSoundRef.current = stopSound;
-  }, [stopSound]);
-
-  // Ses silme
-  const deleteSound = useCallback((soundId: string) => {
+  // Delete sound
+  const deleteSound = useCallback(async (soundId: string) => {
     const sound = sounds.find(s => s.id === soundId);
     if (!sound) return;
-
     stopSound(soundId, false);
-    
-    if (audioRefs.current[soundId]) {
-      audioRefs.current[soundId].src = '';
-      delete audioRefs.current[soundId];
-    }
-    
-    if (sound.url.startsWith('blob:')) {
-      URL.revokeObjectURL(sound.url);
-    }
-    
+    if (audioRefs.current[soundId]) { audioRefs.current[soundId].src = ''; delete audioRefs.current[soundId]; }
+    if (sound.url.startsWith('blob:')) URL.revokeObjectURL(sound.url);
     setSounds(prev => prev.filter(s => s.id !== soundId));
-    
-    toast({
-      title: "Ses silindi",
-      description: `${sound.name} başarıyla silindi`,
-    });
+    try { await deleteSoundFromDB(soundId); } catch {}
+    toast({ title: "Ses silindi", description: `${sound.name} silindi` });
   }, [sounds, stopSound]);
 
-  // Tuş atama başlatma
-  const startKeyAssignment = useCallback((sound: Sound) => {
-    setIsListening(true);
-    setSoundToAssign(sound);
-    toast({
-      title: "Tuş atama",
-      description: "Bir tuşa basın... (ESC ile iptal)",
-    });
-  }, []);
-
-  // Tuş atama
   const assignKeyToSound = useCallback((soundId: string, keyCode: string) => {
-    setSounds(prev => prev.map(sound => 
-      sound.id === soundId 
-        ? { ...sound, assignedKey: keyCode }
-        : sound
-    ));
-    
-    toast({
-      title: "Tuş atandı",
-      description: `${formatKeyName(keyCode)} tuşu atandı`,
-    });
+    setSounds(prev => prev.map(s => s.id === soundId ? { ...s, assignedKey: keyCode } : s));
+    updateSoundMetaInDB(soundId, { assignedKey: keyCode }).catch(() => {});
+    toast({ title: "Tuş atandı", description: `${formatKey(keyCode)} atandı` });
   }, []);
 
-  // Tuş atamasını kaldırma
   const removeKeyAssignment = useCallback((soundId: string) => {
-    setSounds(prev => prev.map(sound => 
-      sound.id === soundId 
-        ? { ...sound, assignedKey: undefined }
-        : sound
-    ));
-    
-    toast({
-      title: "Tuş kaldırıldı",
-      description: "Tuş ataması kaldırıldı",
-    });
+    setSounds(prev => prev.map(s => s.id === soundId ? { ...s, assignedKey: undefined } : s));
+    updateSoundMetaInDB(soundId, { assignedKey: undefined }).catch(() => {});
   }, []);
 
-  // Klavye kodunu formatla
-  const formatKeyName = useCallback((keyCode: string): string => {
-    const keyMap: { [key: string]: string } = {
-      'Space': 'Boşluk',
-      'Enter': 'Enter',
-      'Tab': 'Tab',
-      'Escape': 'Esc',
-      'Backspace': 'Backspace',
-      'Delete': 'Delete',
-      'ArrowUp': '↑',
-      'ArrowDown': '↓',
-      'ArrowLeft': '←',
-      'ArrowRight': '→',
-      'Home': 'Home',
-      'End': 'End',
-      'PageUp': 'PageUp',
-      'PageDown': 'PageDown',
-      'Insert': 'Insert',
-      'F1': 'F1', 'F2': 'F2', 'F3': 'F3', 'F4': 'F4', 'F5': 'F5', 'F6': 'F6',
-      'F7': 'F7', 'F8': 'F8', 'F9': 'F9', 'F10': 'F10', 'F11': 'F11', 'F12': 'F12',
-    };
-
-    if (keyMap[keyCode]) {
-      return keyMap[keyCode];
-    }
-
-    if (keyCode.startsWith('Key')) {
-      return keyCode.slice(3);
-    }
-    if (keyCode.startsWith('Digit')) {
-      return keyCode.slice(5);
-    }
-
-    return keyCode;
-  }, []);
-
-  // Süre formatla
-  const formatDuration = useCallback((seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  }, []);
-
-  // Ses seviyesi ayarlama
   const setSoundVolume = useCallback((soundId: string, volume: number) => {
-    setSounds(prev => prev.map(sound => 
-      sound.id === soundId 
-        ? { ...sound, volume }
-        : sound
-    ));
-    
+    setSounds(prev => prev.map(s => s.id === soundId ? { ...s, volume } : s));
     const audio = audioRefs.current[soundId];
-    if (audio) {
-      audio.volume = volume / 100;
-    }
+    if (audio) audio.volume = volume / 100;
+    updateSoundMetaInDB(soundId, { volume }).catch(() => {});
   }, []);
 
+  const formatKey = (code: string): string => {
+    if (code.startsWith('Key')) return code.slice(3);
+    if (code.startsWith('Digit')) return code.slice(5);
+    const map: Record<string, string> = { Space: 'Boşluk', Enter: 'Enter', Tab: 'Tab', Escape: 'Esc' };
+    return map[code] || code;
+  };
+
+  const fmtDur = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+
+  // ============ COMPACT UI ============
   return (
-    <Card className="glass bg-gradient-to-br from-[#0a0d1aee] via-[#1a1f3a99] to-[#2a2f5a88] border border-[#4dc9fa22] rounded-2xl shadow-2xl p-4 w-full backdrop-blur-xl relative overflow-hidden">
-      {/* Arka plan efekti */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#4dc9fa08] via-transparent to-[#4dc9fa04] pointer-events-none"></div>
-      
-      {/* Header */}
-      <div className="relative z-10 mb-3">
-        <h3 className="text-base font-bold bg-gradient-to-r from-[#4dc9fa] to-[#7dd3fc] bg-clip-text text-transparent tracking-tight flex items-center gap-2">
-          <FileAudio className="w-4 h-4" />
-          Ses Paneli
-        </h3>
-      </div>
+    <div className="rounded-xl border border-[#23253a] bg-[#101320ee] backdrop-blur-xl overflow-hidden">
+      {/* Compact Header — always visible */}
+      <button 
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-[#ffffff06] transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <FileAudio size={13} className="text-[#4dc9fa]" />
+          <span className="text-xs font-semibold text-[#e5eaff]">Ses Paneli</span>
+          {sounds.length > 0 && (
+            <span className="text-[10px] text-[#4dc9fa] bg-[#4dc9fa15] px-1.5 py-0.5 rounded-full">{sounds.length}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {/* Quick play buttons for first 3 sounds when collapsed */}
+          {!expanded && sounds.slice(0, 3).map(s => (
+            <button
+              key={s.id}
+              onClick={(e) => { e.stopPropagation(); playSound(s.id); }}
+              className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold transition-all ${
+                playingSounds.has(s.id) ? 'bg-[#4dc9fa33] text-[#4dc9fa] ring-1 ring-[#4dc9fa]' : 'bg-[#15182a] text-[#aab7e7] hover:text-[#4dc9fa] hover:bg-[#4dc9fa15]'
+              }`}
+              title={s.name}
+            >
+              {s.assignedKey ? formatKey(s.assignedKey) : s.name.charAt(0).toUpperCase()}
+            </button>
+          ))}
+          {expanded ? <ChevronUp size={12} className="text-[#7c8dbb]" /> : <ChevronDown size={12} className="text-[#7c8dbb]" />}
+        </div>
+      </button>
 
-      {/* Tuş dinleme göstergesi */}
-      <AnimatePresence mode="wait">
-        {isListening && (
-          <motion.div
-            key="listening-indicator"
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            className="relative z-10 mb-3 p-3 bg-[#4dc9fa22] border border-[#4dc9fa] rounded-lg text-center"
-          >
-            <Keyboard className="w-5 h-5 mx-auto mb-1 text-[#4dc9fa] animate-pulse" />
-            <p className="text-[#e5eaff] text-sm font-medium">Bir tuşa basın...</p>
-            <p className="text-[#aab7e7] text-xs mt-1">ESC ile iptal edin</p>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Ses yükleme */}
-      <div className="relative z-10 mb-3">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="audio/*"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
-        <Button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isUploading}
-          className="w-full bg-gradient-to-r from-[#4dc9fa] to-[#3bb8e9] hover:from-[#3bb8e9] hover:to-[#2aa7d8] text-white font-medium rounded-lg h-9 transition-all duration-300 shadow-lg hover:shadow-[#4dc9fa33] disabled:opacity-50"
-        >
-          {isUploading ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="text-sm">Yükleniyor...</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Upload className="h-3 w-3" />
-              <span className="text-sm">Ses Yükle</span>
+      {/* Expanded Content */}
+      {expanded && (
+        <div className="px-3 pb-3 space-y-2 border-t border-[#ffffff08]">
+          {/* Key listening indicator */}
+          {isListening && (
+            <div className="mt-2 py-2 text-center bg-[#4dc9fa15] border border-[#4dc9fa33] rounded-lg animate-pulse">
+              <span className="text-xs text-[#4dc9fa]">Bir tuşa bas... (ESC iptal)</span>
             </div>
           )}
-        </Button>
-      </div>
 
-      {/* Ses listesi */}
-      <div className="relative z-10">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-sm font-semibold bg-gradient-to-r from-[#4dc9fa] to-[#7dd3fc] bg-clip-text text-transparent flex items-center gap-1">
-            <Volume2 className="w-3 h-3" />
-            Sesler
-          </h4>
-          <Badge className="bg-[#4dc9fa22] text-[#4dc9fa] border border-[#4dc9fa] rounded-full px-2 py-0.5 text-xs">
-            {sounds.length}
-          </Badge>
-        </div>
-        
-        <ScrollArea className="h-48 rounded-lg border border-[#4dc9fa22] bg-[#0f1422aa] backdrop-blur-sm">
-          <div className="p-2 space-y-2">
-            {sounds.length === 0 ? (
-              <div className="text-center py-6">
-                <FileAudio className="h-8 w-8 mx-auto mb-2 text-[#4dc9fa] opacity-50" />
-                <p className="text-[#aab7e7] text-sm mb-1">Henüz ses yüklenmedi</p>
-                <p className="text-[#7c8dbb] text-xs">Ses dosyalarınızı yükleyip klavye kısayolları atayın</p>
-              </div>
-            ) : (
-              <AnimatePresence mode="wait">
-                {sounds.map((sound, index) => (
-                  <motion.div
-                    key={sound.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ delay: index * 0.1 }}
-                    className={`flex items-center gap-2 p-2 rounded-lg border transition-all duration-300 backdrop-blur-sm ${
-                      playingSounds.has(sound.id)
-                        ? 'bg-[#4dc9fa22] border-[#4dc9fa] shadow-[#4dc9fa22]' 
-                        : 'bg-[#0f1422aa] border-[#4dc9fa22] hover:bg-[#4dc9fa11] hover:border-[#4dc9fa44]'
-                    }`}
-                  >
-                    {/* Ses bilgileri */}
-                    <div className="flex-1 min-w-0 overflow-hidden">
-                      <p className="text-[#e5eaff] font-medium text-sm leading-tight break-words line-clamp-1">
-                        {sound.name}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1">
-                        {sound.duration && (
-                          <span className="text-[#7c8dbb] text-xs">
-                            {formatDuration(sound.duration)}
-                          </span>
-                        )}
-                        {sound.assignedKey && (
-                          <Badge className="bg-[#4dc9fa22] text-[#4dc9fa] border border-[#4dc9fa] rounded-full px-2 py-0.5 text-xs">
-                            {formatKeyName(sound.assignedKey)}
-                          </Badge>
-                        )}
-                        {playingSounds.has(sound.id) && (
-                          <div className="flex items-center gap-1">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[#4dc9fa] animate-pulse"></div>
-                            <span className="text-[#4dc9fa] text-xs">Çalıyor</span>
-                          </div>
-                        )}
-                      </div>
-                      {/* Ses seviyesi slider'ı */}
-                      <div className="flex items-center gap-2 mt-2">
-                        <Volume2 size={10} className="text-[#aab7e7]" />
-                        <Slider 
-                          defaultValue={[sound.volume || 100]} 
-                          max={100} 
-                          step={1} 
-                          className="w-full" 
-                          onValueChange={(value) => setSoundVolume(sound.id, value[0])}
-                        />
-                        <span className="text-[#7c8dbb] text-xs min-w-[2rem] text-right">
-                          {sound.volume || 100}%
-                        </span>
-                      </div>
-                    </div>
-                    
-                    {/* Kontroller */}
-                    <div className="flex items-center gap-1">
-                      {/* Oynat/Durdur */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => playSound(sound.id)}
-                        className="w-7 h-7 rounded-full bg-[#0f1422aa] text-[#e5eaff] hover:bg-[#4dc9fa22] hover:text-[#4dc9fa] border border-[#4dc9fa22] transition-all duration-300"
-                      >
-                        {playingSounds.has(sound.id) ? (
-                          <Pause className="h-3 w-3" />
-                        ) : (
-                          <Play className="h-3 w-3 ml-0.5" />
-                        )}
-                      </Button>
-                      
-                      {/* Tuş ata */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => sound.assignedKey ? removeKeyAssignment(sound.id) : startKeyAssignment(sound)}
-                        className={`w-7 h-7 rounded-full transition-all duration-300 ${
-                          sound.assignedKey
-                            ? 'bg-[#ff475722] text-red-400 hover:bg-[#ff475744] hover:text-red-300 border border-red-400'
-                            : 'bg-[#0f1422aa] text-[#aab7e7] hover:bg-[#4dc9fa22] hover:text-[#4dc9fa] border border-[#4dc9fa22]'
-                        }`}
-                      >
-                        <Keyboard className="h-3 w-3" />
-                      </Button>
-                      
-                      {/* Sil */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => deleteSound(sound.id)}
-                        className="w-7 h-7 rounded-full bg-[#ff475722] text-red-400 hover:bg-[#ff475744] hover:text-red-300 transition-all duration-300"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            )}
+          {/* Upload button */}
+          <div className="mt-2">
+            <input ref={fileInputRef} type="file" multiple accept="audio/*" onChange={handleFileUpload} className="hidden" />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="w-full py-1.5 rounded-lg text-xs font-medium bg-[#4dc9fa15] text-[#4dc9fa] border border-dashed border-[#4dc9fa33] hover:bg-[#4dc9fa22] hover:border-[#4dc9fa] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {isUploading ? <><Loader2 size={11} className="animate-spin" /> Yükleniyor...</> : <><Upload size={11} /> Ses Yükle</>}
+            </button>
           </div>
-        </ScrollArea>
-      </div>
-    </Card>
+
+          {/* Sound list — compact rows */}
+          {sounds.length === 0 ? (
+            <p className="text-[10px] text-[#7c8dbb] text-center py-3">Henüz ses yüklenmedi</p>
+          ) : (
+            <div className="space-y-1 max-h-40 overflow-y-auto scrollbar-thin">
+              {sounds.map(sound => (
+                <div
+                  key={sound.id}
+                  className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-all text-[11px] group ${
+                    playingSounds.has(sound.id)
+                      ? 'bg-[#4dc9fa15] border border-[#4dc9fa44]'
+                      : 'bg-[#15182a] border border-[#23253a] hover:border-[#4dc9fa22]'
+                  }`}
+                >
+                  {/* Play/Pause */}
+                  <button onClick={() => playSound(sound.id)} className="w-5 h-5 rounded flex items-center justify-center text-[#e5eaff] hover:text-[#4dc9fa] transition-colors flex-shrink-0">
+                    {playingSounds.has(sound.id) ? <Pause size={10} /> : <Play size={10} className="ml-0.5" />}
+                  </button>
+
+                  {/* Name + duration */}
+                  <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                    <span className="text-[#e5eaff] truncate font-medium leading-tight">{sound.name}</span>
+                    {sound.duration ? <span className="text-[9px] text-[#7c8dbb] flex-shrink-0">{fmtDur(sound.duration)}</span> : null}
+                    {sound.assignedKey && (
+                      <span className="text-[9px] text-[#4dc9fa] bg-[#4dc9fa15] px-1 py-0.5 rounded font-mono flex-shrink-0">{formatKey(sound.assignedKey)}</span>
+                    )}
+                  </div>
+
+                  {/* Volume slider — visible on hover */}
+                  <div className="hidden group-hover:flex items-center gap-1 w-16 flex-shrink-0">
+                    <Slider defaultValue={[sound.volume || 100]} max={100} step={1} className="w-full" onValueChange={(v) => setSoundVolume(sound.id, v[0])} />
+                  </div>
+
+                  {/* Actions — visible on hover */}
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                    <button onClick={() => sound.assignedKey ? removeKeyAssignment(sound.id) : (setIsListening(true), setSoundToAssign(sound))}
+                      className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${sound.assignedKey ? 'text-red-400 hover:text-red-300' : 'text-[#7c8dbb] hover:text-[#4dc9fa]'}`}>
+                      <Keyboard size={10} />
+                    </button>
+                    <button onClick={() => deleteSound(sound.id)} className="w-5 h-5 rounded flex items-center justify-center text-red-400/60 hover:text-red-400 transition-colors">
+                      <Trash2 size={10} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 });
 

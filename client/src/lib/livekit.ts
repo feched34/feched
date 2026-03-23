@@ -30,6 +30,8 @@ export class VoiceChatService {
   private localParticipant: LocalParticipant | null = null;
   private speakingListeners: Map<string, () => void> = new Map();
   private connectOptions: VoiceChatOptions | null = null;
+  private audioContext: AudioContext | null = null;
+  private noiseGateStream: MediaStream | null = null;
 
   constructor() {
     this.room = new Room({
@@ -115,6 +117,11 @@ export class VoiceChatService {
     this.speakingListeners.clear();
   }
   
+  /**
+   * Publish audio with enhanced noise suppression.
+   * Pipeline: Mic → High-pass filter (85Hz) → Compressor (noise gate) → LiveKit
+   * This aggressively filters keyboard clicks, eating sounds, background video, etc.
+   */
   async publishAudio(deviceId?: string): Promise<void> {
     try {
       if (!this.localParticipant) {
@@ -124,18 +131,70 @@ export class VoiceChatService {
           return;
         }
       }
-      
-      const trackOptions: any = {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+
+      // Get raw mic stream with maximum browser-level noise suppression
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1,
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        }
       };
 
-      if (deviceId) {
-        trackOptions.deviceId = deviceId;
-      }
+      const rawStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-      this.audioTrack = await createLocalAudioTrack(trackOptions);
+      // Set up Web Audio API noise gate pipeline
+      this.audioContext = new AudioContext({ sampleRate: 48000 });
+      const source = this.audioContext.createMediaStreamSource(rawStream);
+
+      // 1. High-pass filter — removes low rumble, fan noise, vibrations
+      const highpass = this.audioContext.createBiquadFilter();
+      highpass.type = 'highpass';
+      highpass.frequency.value = 85;   // Cut everything below 85Hz
+      highpass.Q.value = 0.7;
+
+      // 2. Second high-pass at slightly higher freq for extra rumble removal
+      const highpass2 = this.audioContext.createBiquadFilter();
+      highpass2.type = 'highpass';
+      highpass2.frequency.value = 120;
+      highpass2.Q.value = 0.5;
+
+      // 3. Compressor acting as noise gate
+      // Low threshold + high ratio = aggressive gating of quiet sounds
+      const compressor = this.audioContext.createDynamicsCompressor();
+      compressor.threshold.value = -50;   // Sounds below -50dB get compressed hard
+      compressor.knee.value = 5;          // Sharp transition
+      compressor.ratio.value = 12;        // 12:1 aggressive compression
+      compressor.attack.value = 0.003;    // Fast attack (3ms) catches transients
+      compressor.release.value = 0.25;    // 250ms release - natural speech decay
+
+      // 4. Low-pass filter — removes high-freq hiss/buzz above voice range
+      const lowpass = this.audioContext.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = 8000;   // Human speech rarely above 8kHz
+      lowpass.Q.value = 0.7;
+
+      // 5. Gain to compensate for compression
+      const makeupGain = this.audioContext.createGain();
+      makeupGain.gain.value = 1.4;  // Boost back slightly after compression
+
+      // Chain: source → highpass → highpass2 → compressor → lowpass → gain → destination
+      const dest = this.audioContext.createMediaStreamDestination();
+      source.connect(highpass);
+      highpass.connect(highpass2);
+      highpass2.connect(compressor);
+      compressor.connect(lowpass);
+      lowpass.connect(makeupGain);
+      makeupGain.connect(dest);
+
+      this.noiseGateStream = dest.stream;
+
+      // Create LiveKit track from the processed stream
+      const processedTrack = dest.stream.getAudioTracks()[0];
+      this.audioTrack = new LocalAudioTrack(processedTrack, undefined, false);
       await this.localParticipant.publishTrack(this.audioTrack);
     } catch (error) {
       console.error('Failed to publish audio:', error);
@@ -144,16 +203,28 @@ export class VoiceChatService {
   }
 
   async switchAudioDevice(deviceId: string): Promise<void> {
+    // Clean up existing audio pipeline
     if (this.audioTrack) {
-      // Mevcut track'ı durdur
       this.audioTrack.stop();
       if (this.localParticipant) {
         await this.localParticipant.unpublishTrack(this.audioTrack);
       }
       this.audioTrack = null;
     }
-    // Yeni cihazla yeniden yayınla
+    this.cleanupAudioPipeline();
+    // Rebuild with new device
     await this.publishAudio(deviceId);
+  }
+
+  private cleanupAudioPipeline(): void {
+    if (this.noiseGateStream) {
+      this.noiseGateStream.getTracks().forEach(t => t.stop());
+      this.noiseGateStream = null;
+    }
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().catch(() => {});
+      this.audioContext = null;
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -164,6 +235,7 @@ export class VoiceChatService {
       this.localParticipant?.unpublishTrack(this.audioTrack);
       this.audioTrack = null;
     }
+    this.cleanupAudioPipeline();
     await this.room.disconnect();
     this.localParticipant = null;
   }
