@@ -21,6 +21,7 @@ export interface VoiceChatOptions {
   onError?: (error: Error) => void;
   onReconnecting?: () => void;
   onReconnected?: () => void;
+  onTrackMuteChanged?: () => void;
 }
 
 export class VoiceChatService {
@@ -84,6 +85,14 @@ export class VoiceChatService {
         if (track.kind === Track.Kind.Audio) {
           track.attach();
         }
+      });
+
+      // Track mute/unmute - diğer kişiler susturduğunda anlık görünsün
+      this.room.on(RoomEvent.TrackMuted, () => {
+        options.onTrackMuteChanged?.();
+      });
+      this.room.on(RoomEvent.TrackUnmuted, () => {
+        options.onTrackMuteChanged?.();
       });
 
       // Disconnected event

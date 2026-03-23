@@ -18,6 +18,7 @@ export interface VoiceChatState {
   isDeafened: boolean;
   isPTTActive: boolean;
   pttEnabled: boolean;
+  pttKey: string;
   connectionError: string | null;
   roomDuration: string;
   audioDevices: MediaDeviceInfo[];
@@ -36,6 +37,7 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
     isDeafened: false,
     isPTTActive: false,
     pttEnabled: false,
+    pttKey: localStorage.getItem('goccord_ptt_key') || 'Space',
     connectionError: null,
     roomDuration: '00:00',
     audioDevices: [],
@@ -47,7 +49,7 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
   const voiceChatRef = useRef<VoiceChatService | null>(null);
   const startTimeRef = useRef<Date | null>(null);
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pttKeyRef = useRef<string>('Space');
+  const pttKeyRef = useRef<string>(localStorage.getItem('goccord_ptt_key') || 'Space');
   const isPTTKeyDownRef = useRef<boolean>(false);
 
   const updateParticipants = useCallback(() => {
@@ -132,6 +134,10 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
         },
         onReconnected: () => {
           setState(prev => ({ ...prev, isReconnecting: false }));
+          updateParticipants();
+        },
+        onTrackMuteChanged: () => {
+          // Diger kisiler mic actığında/kapattığında katılımcı listesini güncelle
           updateParticipants();
         },
         onError: (error) => {
@@ -273,6 +279,30 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
     }
   }, []);
 
+  // Çıkış cihazı değiştirme
+  const switchOutputDevice = useCallback(async (deviceId: string) => {
+    setState(prev => ({ ...prev, selectedOutputDevice: deviceId }));
+    // TODO: LiveKit Room.switchActiveDevice ile entegre edilebilir
+    // Şimdilik tüm audio element'lerin sinkId'sini değiştir
+    try {
+      const audioElements = document.querySelectorAll('audio');
+      audioElements.forEach((el: any) => {
+        if (el.setSinkId) {
+          el.setSinkId(deviceId);
+        }
+      });
+    } catch (error) {
+      console.error('Error switching output device:', error);
+    }
+  }, []);
+
+  // PTT tuşu değiştirme
+  const setPTTKey = useCallback((keyCode: string) => {
+    pttKeyRef.current = keyCode;
+    localStorage.setItem('goccord_ptt_key', keyCode);
+    setState(prev => ({ ...prev, pttKey: keyCode }));
+  }, []);
+
   const setParticipantVolume = useCallback((participantIdentity: string, volume: number) => {
     if (voiceChatRef.current) {
       voiceChatRef.current.setParticipantVolume(participantIdentity, volume);
@@ -301,10 +331,12 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
     toggleMute,
     toggleDeafen,
     togglePTT,
+    setPTTKey,
     switchAudioDevice,
+    switchOutputDevice,
     setParticipantVolume,
     loadAudioDevices,
-  }), [state, connect, disconnect, toggleMute, toggleDeafen, togglePTT, switchAudioDevice, setParticipantVolume, loadAudioDevices]);
+  }), [state, connect, disconnect, toggleMute, toggleDeafen, togglePTT, setPTTKey, switchAudioDevice, switchOutputDevice, setParticipantVolume, loadAudioDevices]);
 
   return returnValue;
 }

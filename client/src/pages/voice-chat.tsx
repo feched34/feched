@@ -8,7 +8,7 @@ import SoundManager from '@/components/SoundManager';
 import VoiceControls from '@/components/VoiceControls';
 import { LoadingOverlay } from '@/components/ui/loading-overlay';
 import { ErrorModal } from '@/components/ui/error-modal';
-import { Volume2, Mic, MicOff, VolumeX, LogOut, MessageCircle, Music, Users, Settings, Radio } from 'lucide-react';
+import { Volume2, Mic, MicOff, VolumeX, LogOut, MessageCircle, Music, Users, Settings, Radio, Server, Keyboard, X, ChevronRight, Headphones } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 
 // localStorage helper
@@ -50,6 +50,8 @@ export default function VoiceChat() {
   const [savedUser, setSavedUser] = useState<SavedUser | null>(null);
   const [mobileTab, setMobileTab] = useState<'chat' | 'participants' | 'music'>('chat');
   const [pendingConnect, setPendingConnect] = useState(false);
+  const [showServerPanel, setShowServerPanel] = useState(false);
+  const [pttKeyBinding, setPttKeyBinding] = useState(false);
 
   const {
     isConnecting,
@@ -60,15 +62,20 @@ export default function VoiceChat() {
     isDeafened,
     isPTTActive,
     pttEnabled,
+    pttKey,
     connectionError,
     audioDevices,
+    audioOutputDevices,
     selectedAudioDevice,
+    selectedOutputDevice,
     connect,
     disconnect,
     toggleMute,
     toggleDeafen,
     togglePTT,
+    setPTTKey,
     switchAudioDevice,
+    switchOutputDevice,
     setParticipantVolume,
   } = useVoiceChat({ nickname, roomName: serverName || 'default-room' });
 
@@ -310,11 +317,67 @@ export default function VoiceChat() {
             <span className="hidden sm:block text-[#aab7e7] text-sm">
               <span className="font-semibold text-[#eac073]">{nickname}</span>
             </span>
+            <button onClick={() => setShowServerPanel(!showServerPanel)} className="text-[#aab7e7] hover:text-[#4dc9fa] transition-all duration-300 p-2 hover:bg-[#4dc9fa22] rounded-lg" title="Sunucularım">
+              <Server size={18} />
+            </button>
             <button onClick={handleLeaveRoom} className="text-[#eac073] hover:text-[#ffb300] transition-all duration-300 p-2 hover:bg-[#eac07322] rounded-lg" title="Odadan çık">
               <LogOut size={18} />
             </button>
           </div>
         </header>
+
+        {/* Sunucu Paneli Overlay */}
+        {showServerPanel && (
+          <>
+            <div className="fixed inset-0 z-40 bg-black/50" onClick={() => setShowServerPanel(false)} />
+            <div className="fixed right-0 top-0 bottom-0 z-50 w-72 bg-[#101320] border-l border-[#23253a] shadow-2xl flex flex-col animate-slideIn">
+              <div className="flex items-center justify-between p-4 border-b border-[#23253a]">
+                <h3 className="text-sm font-semibold text-[#e5eaff] flex items-center gap-2"><Server size={14} /> Sunucularım</h3>
+                <button onClick={() => setShowServerPanel(false)} className="text-[#7c8dbb] hover:text-[#e5eaff] transition-colors"><X size={18} /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {(getSavedUser()?.rooms || []).map((room: string) => (
+                  <button
+                    key={room}
+                    onClick={async () => {
+                      if (room !== serverName) {
+                        await disconnect();
+                        setServerName(room);
+                        saveUser(nickname, room);
+                        setPendingConnect(true);
+                      }
+                      setShowServerPanel(false);
+                    }}
+                    className={`w-full p-3 rounded-xl text-left transition-all duration-300 group ${
+                      room === serverName
+                        ? 'bg-gradient-to-r from-[#2ec8fa22] to-[#eac07322] border border-[#2ec8fa33]'
+                        : 'bg-[#15182a] border border-[#23253a] hover:border-[#4dc9fa33]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-[#6a7bfd] to-[#2ec8fa] flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+                        {room.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className={`font-medium text-sm truncate ${room === serverName ? 'text-[#2ec8fa]' : 'text-[#e5eaff] group-hover:text-[#4dc9fa]'}`}>{room}</span>
+                        {room === serverName && <span className="text-[10px] text-green-400">● Bağlı</span>}
+                      </div>
+                      {room !== serverName && <ChevronRight size={14} className="ml-auto text-[#7c8dbb] opacity-0 group-hover:opacity-100 transition-opacity" />}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="p-3 border-t border-[#23253a]">
+                <button 
+                  onClick={() => { setShowServerPanel(false); handleLeaveRoom(); }}
+                  className="w-full py-2 rounded-lg text-sm text-[#aab7e7] border border-[#23253a] hover:border-[#4dc9fa] hover:text-[#4dc9fa] transition-all"
+                >
+                  Yeni Sunucu
+                </button>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Mobil Tab Bar */}
         <div className="lg:hidden flex border-b border-[#23253a] bg-[#101320ee]">
@@ -377,7 +440,9 @@ export default function VoiceChat() {
                   )}
                   
                   {/* Diğer katılımcılar */}
-                  {remoteParticipants.map((p) => (
+                  {remoteParticipants.map((p) => {
+                    const isRemoteMuted = !p.isMicrophoneEnabled;
+                    return (
                     <div key={p.sid} className="flex flex-col gap-1 p-2 bg-[#15182a] rounded-lg border border-[#23253a] hover:border-[#4dc9fa33] transition-all duration-300 group">
                       <div className="flex items-center gap-2">
                         <div className={`relative w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg bg-[#23305b] transition-all duration-500 ${
@@ -386,27 +451,37 @@ export default function VoiceChat() {
                           {p.identity?.charAt(0).toUpperCase()}
                           {p.isSpeaking && <div className="absolute inset-0 rounded-full bg-green-400 opacity-30 animate-pulse"></div>}
                           <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center">
-                            <div className={`w-full h-full rounded-full flex items-center justify-center shadow-lg ${p.isSpeaking ? 'bg-green-400' : 'bg-green-500'}`}>
-                              <Mic size={8} className="text-white" />
-                            </div>
+                            {isRemoteMuted ? (
+                              <div className="w-full h-full bg-red-500 rounded-full flex items-center justify-center shadow-lg">
+                                <MicOff size={8} className="text-white" />
+                              </div>
+                            ) : (
+                              <div className={`w-full h-full rounded-full flex items-center justify-center shadow-lg ${p.isSpeaking ? 'bg-green-400' : 'bg-green-500'}`}>
+                                <Mic size={8} className="text-white" />
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <span className="font-medium text-[#e5eaff] group-hover:text-[#4dc9fa] transition-colors text-xs">{p.identity}</span>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-[#e5eaff] group-hover:text-[#4dc9fa] transition-colors text-xs">{p.identity}</span>
+                          {isRemoteMuted && <span className="text-[10px] text-red-400">Mikrofon Kapalı</span>}
+                        </div>
                       </div>
                       <div className="flex items-center gap-2 pl-8">
                         <Volume2 size={10} className="text-[#aab7e7]" />
                         <Slider defaultValue={[100]} max={100} step={1} className="w-full" onValueChange={(value) => setParticipantVolume(p.identity, value[0])} />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 
                 {/* Kontroller */}
                 <div className="mt-3 flex-shrink-0 space-y-2">
                   {/* Ses Cihazı Seçimi */}
-                  {audioDevices.length > 1 && (
+                  {audioDevices.length > 0 && (
                     <div className="p-2 bg-[#0f1422] rounded-lg border border-[#23253a]">
-                      <label className="text-[10px] text-[#aab7e7] mb-1 block">Mikrofon</label>
+                      <label className="text-[10px] text-[#aab7e7] mb-1 flex items-center gap-1"><Mic size={10} /> Mikrofon</label>
                       <select 
                         value={selectedAudioDevice} 
                         onChange={(e) => switchAudioDevice(e.target.value)}
@@ -416,6 +491,48 @@ export default function VoiceChat() {
                           <option key={d.deviceId} value={d.deviceId}>{d.label || `Mikrofon ${d.deviceId.slice(0, 8)}`}</option>
                         ))}
                       </select>
+                    </div>
+                  )}
+                  
+                  {/* Çıkış Cihazı Seçimi */}
+                  {audioOutputDevices.length > 0 && (
+                    <div className="p-2 bg-[#0f1422] rounded-lg border border-[#23253a]">
+                      <label className="text-[10px] text-[#aab7e7] mb-1 flex items-center gap-1"><Headphones size={10} /> Çıkış Cihazı</label>
+                      <select 
+                        value={selectedOutputDevice} 
+                        onChange={(e) => switchOutputDevice(e.target.value)}
+                        className="w-full bg-[#15182a] text-[#e5eaff] text-xs rounded p-1.5 border border-[#23253a] outline-none"
+                      >
+                        {audioOutputDevices.map((d) => (
+                          <option key={d.deviceId} value={d.deviceId}>{d.label || `Hoparlör ${d.deviceId.slice(0, 8)}`}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  
+                  {/* PTT Tuş Atama */}
+                  {pttEnabled && (
+                    <div className="p-2 bg-[#0f1422] rounded-lg border border-[#23253a]">
+                      <label className="text-[10px] text-[#aab7e7] mb-1 flex items-center gap-1"><Keyboard size={10} /> PTT Tuşu</label>
+                      {pttKeyBinding ? (
+                        <div className="text-xs text-[#eac073] text-center py-2 animate-pulse">Bir tuşa bas...</div>
+                      ) : (
+                        <button 
+                          onClick={() => {
+                            setPttKeyBinding(true);
+                            const handler = (e: KeyboardEvent) => {
+                              e.preventDefault();
+                              setPTTKey(e.code);
+                              setPttKeyBinding(false);
+                              document.removeEventListener('keydown', handler);
+                            };
+                            document.addEventListener('keydown', handler);
+                          }}
+                          className="w-full bg-[#15182a] text-[#e5eaff] text-xs rounded p-1.5 border border-[#23253a] hover:border-[#4dc9fa] transition-all text-center"
+                        >
+                          {pttKey.replace('Key', '').replace('Space', 'Boşluk')}
+                        </button>
+                      )}
                     </div>
                   )}
                   
@@ -496,6 +613,8 @@ const baseStyles = `
 
 const chatStyles = `
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  .animate-slideIn { animation: slideIn 0.3s ease-out; }
   .scrollbar-thin { scrollbar-width: thin; }
   .scrollbar-thin::-webkit-scrollbar { width: 4px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #4dc9fa44; border-radius: 10px; }
