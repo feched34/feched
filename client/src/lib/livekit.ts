@@ -185,16 +185,22 @@ export class VoiceChatService {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
-        // Chrome-specific advanced constraints for extra noise filtering
-        googEchoCancellation: true,
-        googAutoGainControl: true,
-        googNoiseSuppression: true,
-        googHighpassFilter: true,       // Built-in highpass for rumble
-        googNoiseSuppression2: true,    // Enhanced noise suppression
-        googEchoCancellation2: true,    // Enhanced echo cancellation
-        googAutoGainControl2: true,
         channelCount: 1,
         sampleRate: 48000,
+        advanced: [
+          {
+            // Chrome-specific advanced constraints for extra noise filtering
+            googEchoCancellation: true,
+            googAutoGainControl: true,
+            googNoiseSuppression: true,
+            googHighpassFilter: true,       // Built-in highpass for rumble
+            googTypingNoiseDetection: true, // Specific for keyboard typing!
+            googNoiseSuppression2: true,    // Enhanced noise suppression
+            googEchoCancellation2: true,    // Enhanced echo cancellation
+            googAutoGainControl2: true,
+            googNoiseReduction: true,
+          }
+        ]
       };
 
       if (deviceId) {
