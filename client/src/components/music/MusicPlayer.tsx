@@ -667,7 +667,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
         <div className="relative mb-3">
           <div 
             ref={playerRef} 
-            style={{ display: 'none' }}
+            style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none', zIndex: -1 }}
           ></div>
           
           {/* Görsel: Albüm kapağı stili */}
