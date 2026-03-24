@@ -194,8 +194,6 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
           fs: 0,
           modestbranding: 1,
           iv_load_policy: 3,
-          // Render.com için ek ayarlar
-          host: 'https://www.youtube-nocookie.com',
           disablekb: 1,
           autoplay: 0,
         },
@@ -215,7 +213,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
                 const currentTime = ytPlayer.current.getCurrentTime();
                 sendVideoStateUpdate({
                   isPlaying: true,
-                  currentVideoId: currentSong.video_id,
+                  currentVideoId: currentSong.video_id || currentSong.id,
                   currentTime,
                   duration: ytPlayer.current.getDuration() || 0,
                   lastUpdate: Date.now()
@@ -229,7 +227,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
                 const currentTime = ytPlayer.current.getCurrentTime();
                 sendVideoStateUpdate({
                   isPlaying: false,
-                  currentVideoId: currentSong.video_id,
+                  currentVideoId: currentSong.video_id || currentSong.id,
                   currentTime,
                   duration: ytPlayer.current.getDuration() || 0,
                   lastUpdate: Date.now()
@@ -363,7 +361,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
           // Video state güncellemesi gönder
           sendVideoStateUpdate({
             isPlaying: false,
-            currentVideoId: currentSong.video_id,
+            currentVideoId: currentSong?.video_id || currentSong?.id || '',
             currentTime,
             duration: ytPlayer.current.getDuration() || 0,
             lastUpdate: Date.now()
@@ -382,11 +380,12 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
         ytPlayer.current.playVideo();
         // Senkronizasyon için play komutu gönder
         if (roomId && userId && currentSong) {
-          sendPlayCommand(currentSong.video_id, currentTime);
+          const videoIdToPlay = currentSong.video_id || currentSong.id || '';
+          sendPlayCommand(videoIdToPlay, currentTime);
           // Video state güncellemesi gönder
           sendVideoStateUpdate({
             isPlaying: true,
-            currentVideoId: currentSong.video_id,
+            currentVideoId: videoIdToPlay,
             currentTime,
             duration: ytPlayer.current.getDuration() || 0,
             lastUpdate: Date.now()
@@ -425,7 +424,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       setCurrentSong(nextSong);
       // Senkronizasyon için play komutu gönder
       if (roomId && userId) {
-        sendPlayCommand(nextSong.video_id);
+        sendPlayCommand(nextSong.video_id || nextSong.id || '');
         // State güncellemesi gönder
         sendStateUpdate({
           queue,
@@ -453,7 +452,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       setCurrentSong(prevSong);
       // Senkronizasyon için play komutu gönder
       if (roomId && userId) {
-        sendPlayCommand(prevSong.video_id);
+        sendPlayCommand(prevSong.video_id || prevSong.id || '');
         // State güncellemesi gönder
         sendStateUpdate({
           queue,
