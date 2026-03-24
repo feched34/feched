@@ -85,7 +85,12 @@ export default function VoiceChat() {
     if (saved) {
       setSavedUser(saved);
       setNickname(saved.nickname);
-      setCurrentScreen('returning');
+      if (saved.lastRoom) {
+        setServerName(saved.lastRoom);
+        setPendingConnect(true);
+      } else {
+        setCurrentScreen('returning');
+      }
     }
   }, []);
 
