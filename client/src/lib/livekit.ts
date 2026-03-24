@@ -11,6 +11,7 @@ import {
   Track,
   RemoteAudioTrack,
 } from 'livekit-client';
+import { KrispNoiseFilter } from '@livekit/krisp-noise-filter';
 
 export interface VoiceChatOptions {
   token: string;
@@ -187,6 +188,7 @@ export class VoiceChatService {
         autoGainControl: true,
         channelCount: 1,
         sampleRate: 48000,
+        processor: KrispNoiseFilter(),
         advanced: [
           {
             // Chrome-specific advanced constraints for extra noise filtering
