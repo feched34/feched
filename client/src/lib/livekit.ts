@@ -83,9 +83,38 @@ export class VoiceChatService {
       });
 
       // Audio track auto-attach
-      this.room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: RemoteTrackPublication, _p: RemoteParticipant) => {
+      this.room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
         if (track.kind === Track.Kind.Audio) {
-          track.attach();
+          const element = track.attach();
+          element.style.display = 'none';
+          document.body.appendChild(element);
+        }
+      });
+
+      this.room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+        if (track.kind === Track.Kind.Audio) {
+          track.detach().forEach(el => el.remove());
+        }
+      });
+
+      // Handle browser autoplay policy
+      this.room.on(RoomEvent.AudioPlaybackStatusChanged, (status) => {
+        if (!status) {
+          console.log('Audio playback is blocked by browser. Waiting for user interaction.');
+          const unlockAudio = async () => {
+            try {
+              await this.room.startAudio();
+              console.log('Audio unlocked automatically after interaction');
+            } catch (err) {
+              console.warn('Failed to unlock audio:', err);
+            }
+            document.removeEventListener('click', unlockAudio);
+            document.removeEventListener('touchstart', unlockAudio);
+            document.removeEventListener('keydown', unlockAudio);
+          };
+          document.addEventListener('click', unlockAudio);
+          document.addEventListener('touchstart', unlockAudio);
+          document.addEventListener('keydown', unlockAudio);
         }
       });
 
@@ -104,6 +133,28 @@ export class VoiceChatService {
 
       await this.room.connect(options.wsUrl, options.token);
       this.localParticipant = this.room.localParticipant;
+
+      // Ensure already subscribed tracks (from participants existing in the room) are attached
+      this.room.remoteParticipants.forEach((participant) => {
+        participant.trackPublications.forEach((pub) => {
+          if (pub.isSubscribed && pub.track && pub.track.kind === Track.Kind.Audio) {
+            const track = pub.track;
+            // Only attach if it's not already attached to avoid playing twice
+            if (track.attachedElements.length === 0) {
+              const element = track.attach();
+              element.style.display = 'none';
+              document.body.appendChild(element);
+            }
+          }
+        });
+      });
+      
+      // Try resolving autoplay block immediately if possible
+      try {
+        await this.room.startAudio();
+      } catch (err) {
+        console.warn('startAudio failed (autoplay policy):', err);
+      }
     } catch (error) {
       console.error('Failed to connect to voice chat:', error);
       options.onError?.(error as Error);
