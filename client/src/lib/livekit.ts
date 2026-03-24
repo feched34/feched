@@ -187,22 +187,7 @@ export class VoiceChatService {
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
-        sampleRate: 48000,
-        processor: KrispNoiseFilter(),
-        advanced: [
-          {
-            // Chrome-specific advanced constraints for extra noise filtering
-            googEchoCancellation: true,
-            googAutoGainControl: true,
-            googNoiseSuppression: true,
-            googHighpassFilter: true,       // Built-in highpass for rumble
-            googTypingNoiseDetection: true, // Specific for keyboard typing!
-            googNoiseSuppression2: true,    // Enhanced noise suppression
-            googEchoCancellation2: true,    // Enhanced echo cancellation
-            googAutoGainControl2: true,
-            googNoiseReduction: true,
-          }
-        ]
+        sampleRate: 48000
       };
 
       if (deviceId) {
@@ -210,6 +195,15 @@ export class VoiceChatService {
       }
 
       this.audioTrack = await createLocalAudioTrack(trackOptions);
+
+      // Apply Krisp Noise Filter explicitly
+      try {
+        await this.audioTrack.setProcessor(KrispNoiseFilter());
+        console.log("Krisp AI noise filter applied successfully.");
+      } catch (e) {
+        console.warn("Failed to apply Krisp AI noise filter, falling back to browser native:", e);
+      }
+
       await this.localParticipant.publishTrack(this.audioTrack);
     } catch (error) {
       console.error('Failed to publish audio:', error);
