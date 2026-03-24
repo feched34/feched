@@ -268,16 +268,16 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       // Eğer aynı video zaten yüklüyse sadece oynat
       try {
         const currentVideoId = ytPlayer.current.getVideoData()?.video_id;
-        if (currentVideoId === currentSong.video_id) {
+        if (currentVideoId === (currentSong.video_id || currentSong.id)) {
           if (isPlaying) {
             ytPlayer.current.playVideo();
           }
         } else {
-          ytPlayer.current.loadVideoById(currentSong.video_id);
+          ytPlayer.current.loadVideoById({ videoId: currentSong.video_id || currentSong.id });
         }
       } catch (error) {
         console.error('Error checking current video:', error);
-        ytPlayer.current.loadVideoById(currentSong.video_id);
+        ytPlayer.current.loadVideoById({ videoId: currentSong.video_id || currentSong.id });
       }
     }
   }, [currentSong?.video_id, isReady]); // Sadece video_id değişince tetikle
@@ -380,24 +380,26 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
         ytPlayer.current.playVideo();
         // Senkronizasyon için play komutu gönder
         if (roomId && userId && currentSong) {
-          const videoIdToPlay = currentSong.video_id || currentSong.id || '';
-          sendPlayCommand(videoIdToPlay, currentTime);
-          // Video state güncellemesi gönder
-          sendVideoStateUpdate({
-            isPlaying: true,
-            currentVideoId: videoIdToPlay,
-            currentTime,
-            duration: ytPlayer.current.getDuration() || 0,
-            lastUpdate: Date.now()
-          });
-          // State güncellemesi gönder
-          sendStateUpdate({
-            queue,
-            currentSong,
-            isPlaying: true,
-            repeatMode,
-            isShuffled
-          });
+          const videoIdToPlay = currentSong.video_id || currentSong.id;
+          if (videoIdToPlay) {
+            sendPlayCommand(videoIdToPlay, currentTime);
+            // Video state güncellemesi gönder
+            sendVideoStateUpdate({
+              isPlaying: true,
+              currentVideoId: videoIdToPlay,
+              currentTime,
+              duration: ytPlayer.current.getDuration() || 0,
+              lastUpdate: Date.now()
+            });
+            // State güncellemesi gönder
+            sendStateUpdate({
+              queue,
+              currentSong,
+              isPlaying: true,
+              repeatMode,
+              isShuffled
+            });
+          }
         }
       }
     } catch (error: any) {
@@ -424,7 +426,8 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       setCurrentSong(nextSong);
       // Senkronizasyon için play komutu gönder
       if (roomId && userId) {
-        sendPlayCommand(nextSong.video_id || nextSong.id || '');
+        const videoIdToPlay = nextSong.video_id || nextSong.id;
+        if (videoIdToPlay) sendPlayCommand(videoIdToPlay);
         // State güncellemesi gönder
         sendStateUpdate({
           queue,
@@ -452,7 +455,8 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       setCurrentSong(prevSong);
       // Senkronizasyon için play komutu gönder
       if (roomId && userId) {
-        sendPlayCommand(prevSong.video_id || prevSong.id || '');
+        const videoIdToPlay = prevSong.video_id || prevSong.id;
+        if (videoIdToPlay) sendPlayCommand(videoIdToPlay);
         // State güncellemesi gönder
         sendStateUpdate({
           queue,

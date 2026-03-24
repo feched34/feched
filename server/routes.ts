@@ -400,7 +400,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { roomId, videoId, userId, currentTime = 0 } = req.body;
       
       if (!roomId || !videoId || !userId) {
-        return res.status(400).json({ message: "Room ID, video ID and user ID are required" });
+        console.error('❌ Music Play 400 Error - Missing fields:', { roomId, videoId, userId });
+        return res.status(400).json({ message: "Room ID, video ID and user ID are required", details: { roomId, videoId, userId } });
       }
 
       console.log(`🎵 Play command from ${userId} for video ${videoId} in room ${roomId}`);
