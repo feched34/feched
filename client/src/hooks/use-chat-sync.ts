@@ -23,118 +23,128 @@ interface UseChatSyncOptions {
   onHistoryReceived?: (messages: ChatMessage[]) => void;
 }
 
-export function useChatSync({ roomId, userId, userName, userAvatar, onMessageReceived, onHistoryReceived }: UseChatSyncOptions) {
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isConnectingRef = useRef<boolean>(false);
+function getWsUrl(roomId: string, userId: string): string {
+  let base: string;
+  if (import.meta.env.VITE_SERVER_URL) {
+    // HTTP URL'sini WS'e çevir
+    base = import.meta.env.VITE_SERVER_URL
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/^http:\/\//, 'ws://');
+  } else if (window.location.hostname === 'feched.onrender.com') {
+    base = 'wss://feched.onrender.com';
+  } else {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    base = `${protocol}//${window.location.host}`;
+  }
+  return `${base}/ws?roomId=${encodeURIComponent(roomId)}&userId=${encodeURIComponent(userId)}&type=chat`;
+}
+
+export function useChatSync({
+  roomId,
+  userId,
+  userName,
+  userAvatar,
+  onMessageReceived,
+  onHistoryReceived,
+}: UseChatSyncOptions) {
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef<number>(0);
-  const maxRetries = 5;
+  const isUnmountedRef = useRef<boolean>(false);
+  const maxRetries = 8;
 
-  // Callback'leri ref'te tut - böylece connect fonksiyonu her render'da yeniden oluşmaz
-  const onMessageReceivedRef = useRef(onMessageReceived);
-  const onHistoryReceivedRef = useRef(onHistoryReceived);
-
-  // Her render'da ref'leri güncelle
-  useEffect(() => {
-    onMessageReceivedRef.current = onMessageReceived;
-  }, [onMessageReceived]);
-
-  useEffect(() => {
-    onHistoryReceivedRef.current = onHistoryReceived;
-  }, [onHistoryReceived]);
+  // Callback ref'leri — bağımlılık array'ini temiz tutar
+  const onMessageRef = useRef(onMessageReceived);
+  const onHistoryRef = useRef(onHistoryReceived);
+  useEffect(() => { onMessageRef.current = onMessageReceived; }, [onMessageReceived]);
+  useEffect(() => { onHistoryRef.current = onHistoryReceived; }, [onHistoryReceived]);
 
   const connect = useCallback(() => {
-    if (eventSourceRef.current?.readyState === EventSource.OPEN || isConnectingRef.current) {
+    if (isUnmountedRef.current) return;
+
+    // Eski bağlantıyı temiz kapat
+    if (wsRef.current) {
+      wsRef.current.onclose = null; // reconnect loop'u engelle
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    const wsUrl = getWsUrl(roomId, userId);
+    console.log('💬 Chat WS connecting:', wsUrl);
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (err) {
+      console.error('💬 Cannot create WebSocket:', err);
       return;
     }
 
-    isConnectingRef.current = true;
+    wsRef.current = ws;
 
-    // SSE URL'sini oluştur
-    let sseUrl: string;
-    
-    if (import.meta.env.VITE_SERVER_URL) {
-      sseUrl = import.meta.env.VITE_SERVER_URL;
-    } else if (window.location.hostname === 'feched.onrender.com') {
-      sseUrl = 'https://feched.onrender.com';
-    } else {
-      sseUrl = window.location.origin;
-    }
-    
-    sseUrl += `/api/chat/${roomId}/events?userId=${userId}`;
-    
-    console.log('💬 Connecting to SSE:', sseUrl);
-    
-    try {
-      // Önceki bağlantıyı temizle
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
+    ws.onopen = () => {
+      console.log('💬 Chat WS connected');
+      retryCountRef.current = 0;
+      // join_room mesajı gönder — history ve state'i al
+      ws.send(JSON.stringify({
+        type: 'join_room',
+        roomId,
+        userId,
+        userName,
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'chat_message') {
+          onMessageRef.current(data.message as ChatMessage);
+        }
+
+        if (data.type === 'chat_history' && onHistoryRef.current) {
+          console.log('💬 Received chat history:', data.messages?.length, 'messages');
+          onHistoryRef.current(data.messages as ChatMessage[]);
+        }
+        // pong / diğer mesajları yoksay
+      } catch (err) {
+        console.error('💬 WS message parse error:', err);
       }
-      
-      eventSourceRef.current = new EventSource(sseUrl);
+    };
 
-      eventSourceRef.current.onopen = () => {
-        console.log('💬 SSE connected successfully');
-        isConnectingRef.current = false;
-        retryCountRef.current = 0;
-      };
+    ws.onerror = (err) => {
+      console.error('💬 Chat WS error:', err);
+    };
 
-      eventSourceRef.current.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'chat_message') {
-            const message: ChatMessage = data.message;
-            console.log('💬 Received chat message from:', message.user.name);
-            onMessageReceivedRef.current(message);
-          }
-          
-          if (data.type === 'chat_history' && onHistoryReceivedRef.current) {
-            console.log('💬 Received chat history:', data.messages.length, 'messages');
-            onHistoryReceivedRef.current(data.messages);
-          }
-          
-          if (data.type === 'connected') {
-            console.log('💬 SSE connection confirmed for room:', data.roomId);
-          }
-        } catch (error) {
-          console.error('Error parsing SSE message:', error);
-        }
-      };
+    ws.onclose = (event) => {
+      if (isUnmountedRef.current) return;
+      console.warn('💬 Chat WS closed:', event.code, event.reason);
 
-      eventSourceRef.current.onerror = () => {
-        console.error('💬 SSE error');
-        isConnectingRef.current = false;
-        
-        if (retryCountRef.current < maxRetries) {
-          retryCountRef.current++;
-          const retryDelay = Math.min(1000 * Math.pow(2, retryCountRef.current), 10000);
-          
-          console.log(`💬 Retrying SSE connection in ${retryDelay}ms (attempt ${retryCountRef.current}/${maxRetries})`);
-          
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
-          }
-          reconnectTimeoutRef.current = setTimeout(() => {
-            if (eventSourceRef.current?.readyState !== EventSource.OPEN) {
-              connect();
-            }
-          }, retryDelay);
-        }
-      };
-
-    } catch (error) {
-      console.error('Error creating SSE connection:', error);
-      isConnectingRef.current = false;
-    }
-  }, [roomId, userId]); // Artık sadece roomId ve userId'ye bağlı
+      if (retryCountRef.current < maxRetries) {
+        retryCountRef.current++;
+        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current - 1), 15000);
+        console.log(`💬 Retrying WS in ${delay}ms (attempt ${retryCountRef.current}/${maxRetries})`);
+        reconnectTimerRef.current = setTimeout(connect, delay);
+      }
+    };
+  }, [roomId, userId, userName]);
 
   const sendMessage = useCallback(async (content: string) => {
+    // Önce WebSocket üzerinden dene (anlık)
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'chat_message',
+        roomId,
+        userId,
+        userName,
+        userAvatar,
+        message: content,
+      }));
+      return;
+    }
+
+    // Fallback: HTTP POST
     try {
-      console.log('💬 Sending message via HTTP POST:', content);
-      
-      // Server URL'sini belirle
       let serverUrl: string;
       if (import.meta.env.VITE_SERVER_URL) {
         serverUrl = import.meta.env.VITE_SERVER_URL;
@@ -143,46 +153,31 @@ export function useChatSync({ roomId, userId, userName, userAvatar, onMessageRec
       } else {
         serverUrl = window.location.origin;
       }
-      
-      const response = await fetch(`${serverUrl}/api/chat/${roomId}/messages`, {
+
+      await fetch(`${serverUrl}/api/chat/${roomId}/messages`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          roomId,
-          userId,
-          userName,
-          userAvatar,
-          content,
-          messageType: 'text'
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, userId, userName, userAvatar, content, messageType: 'text' }),
       });
-      
-      if (response.ok) {
-        console.log('💬 Message sent successfully');
-      } else {
-        console.error('💬 Failed to send message:', response.status);
-      }
-    } catch (error) {
-      console.error('Error sending chat message:', error);
+    } catch (err) {
+      console.error('💬 Failed to send message via HTTP fallback:', err);
     }
   }, [roomId, userId, userName, userAvatar]);
 
   useEffect(() => {
+    isUnmountedRef.current = false;
     connect();
-    
+
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
+      isUnmountedRef.current = true;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, [connect]);
 
-  return {
-    sendMessage,
-  };
+  return { sendMessage };
 }

@@ -31,11 +31,21 @@ function getSavedUser(): SavedUser | null {
 
 function saveUser(nickname: string, room: string) {
   try {
+    const normalizedRoom = room.trim().toLowerCase();
     const existing = getSavedUser();
     const rooms = existing?.rooms || [];
-    if (!rooms.includes(room)) rooms.push(room);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nickname, lastRoom: room, rooms }));
+    // Kayıtta lowercase kullan
+    if (!rooms.some(r => r.toLowerCase() === normalizedRoom)) rooms.push(normalizedRoom);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nickname, lastRoom: normalizedRoom, rooms }));
   } catch {}
+}
+
+// identity'den _timestamp kısmını kaldır: "Feched_1234567890" → "Feched"
+function displayName(identity: string | undefined): string {
+  if (!identity) return 'Anonim';
+  const idx = identity.lastIndexOf('_');
+  if (idx > 0) return identity.substring(0, idx);
+  return identity;
 }
 
 function clearSavedUser() {
@@ -100,8 +110,9 @@ export default function VoiceChat() {
   const handleJoinRoom = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nickname.trim() || !serverName.trim()) return;
-    
-    saveUser(nickname, serverName);
+    const normalizedServer = serverName.trim().toLowerCase();
+    setServerName(normalizedServer);
+    saveUser(nickname, normalizedServer);
     await connect();
   }, [nickname, serverName, connect]);
 
@@ -165,12 +176,12 @@ export default function VoiceChat() {
 
   const currentUser = useMemo(() => ({
     id: localParticipant?.identity || '0',
-    name: localParticipant?.identity || 'Anonim',
+    name: displayName(localParticipant?.identity),
     avatar: '/logo.png'
   }), [localParticipant?.identity]);
 
   const users = useMemo(() => 
-    participants.map(p => ({ id: p.identity, name: p.identity, avatar: '/logo.png' })), 
+    participants.map(p => ({ id: p.identity, name: displayName(p.identity), avatar: '/logo.png' })), 
     [participants]
   );
 
@@ -196,7 +207,8 @@ export default function VoiceChat() {
             
             {savedUser.rooms.length > 0 && (
               <div className="fade-in fade-in-3 w-full mb-4">
-                <p className="text-sm text-[#aab7e7] mb-3">Sunucularına katıl:</p>
+                <p className="text-sm text-[#aab7e7] mb-1 font-semibold">📡 Sunucularına Katıl</p>
+                <p className="text-xs text-[#7c8dbb] mb-3">Bir sunucuya tıkla ve anında sesli sohbete gir.</p>
                 <div className="space-y-2">
                   {savedUser.rooms.map((room) => (
                     <button
@@ -205,18 +217,22 @@ export default function VoiceChat() {
                         setServerName(room);
                         handleReturnToRoom(room);
                       }}
-                      className="w-full p-3 bg-[#15182a] border border-[#23253a] rounded-xl text-left hover:border-[#4dc9fa] hover:bg-[#1a1f3a] transition-all duration-300 group"
+                      className="w-full p-3 bg-[#15182a] border border-[#23253a] rounded-xl text-left hover:border-[#4dc9fa] hover:bg-[#1a1f3a] transition-all group"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#6a7bfd] to-[#2ec8fa] flex items-center justify-center text-white font-bold">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#6a7bfd] to-[#2ec8fa] flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
                           {room.charAt(0).toUpperCase()}
                         </div>
-                        <div>
-                          <span className="text-[#e5eaff] font-medium group-hover:text-[#4dc9fa] transition-colors">{room}</span>
-                          {room === savedUser.lastRoom && (
-                            <span className="ml-2 text-xs text-[#2ec8fa] bg-[#2ec8fa22] px-2 py-0.5 rounded-full">Son</span>
-                          )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[#e5eaff] font-semibold group-hover:text-[#4dc9fa] transition-colors truncate">{room}</span>
+                            {room === savedUser.lastRoom && (
+                              <span className="text-xs text-[#2ec8fa] bg-[#2ec8fa22] px-2 py-0.5 rounded-full flex-shrink-0">Son</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-[#7c8dbb] group-hover:text-[#4dc9fa55] transition-colors">Sesli sohbete katıl</p>
                         </div>
+                        <ChevronRight size={16} className="text-[#7c8dbb] group-hover:text-[#4dc9fa] transition-colors flex-shrink-0" />
                       </div>
                     </button>
                   ))}
@@ -421,7 +437,7 @@ export default function VoiceChat() {
                         <div className={`relative w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg bg-[#6a7bfd] transition-all duration-500 ${
                           localParticipant.isSpeaking ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-[#101320] scale-105' : ''
                         }`}>
-                          {localParticipant.identity?.charAt(0).toUpperCase()}
+                          {displayName(localParticipant.identity)?.charAt(0).toUpperCase()}
                           {localParticipant.isSpeaking && <div className="absolute inset-0 rounded-full bg-green-400 opacity-30 animate-pulse"></div>}
                           <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center">
                             {isMuted ? (
@@ -435,7 +451,7 @@ export default function VoiceChat() {
                           )}
                         </div>
                         <div className="flex flex-col">
-                          <span className="font-semibold text-[#eac073] text-xs">{localParticipant.identity}</span>
+                          <span className="font-semibold text-[#eac073] text-xs">{displayName(localParticipant.identity)}</span>
                           {isPTTActive && <span className="text-[10px] text-green-400">🎙️ PTT Aktif</span>}
                         </div>
                       </div>
@@ -452,7 +468,7 @@ export default function VoiceChat() {
                         <div className={`relative w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg bg-[#23305b] transition-all duration-500 ${
                           p.isSpeaking ? 'ring-2 ring-green-400 ring-offset-1 ring-offset-[#101320] scale-105' : ''
                         }`}>
-                          {p.identity?.charAt(0).toUpperCase()}
+                          {displayName(p.identity)?.charAt(0).toUpperCase()}
                           {p.isSpeaking && <div className="absolute inset-0 rounded-full bg-green-400 opacity-30 animate-pulse"></div>}
                           <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center">
                             {isRemoteMuted ? (
@@ -463,7 +479,7 @@ export default function VoiceChat() {
                           </div>
                         </div>
                         <div className="flex flex-col">
-                          <span className="font-medium text-[#e5eaff] group-hover:text-[#4dc9fa] transition-colors text-xs">{p.identity}</span>
+                          <span className="font-medium text-[#e5eaff] group-hover:text-[#4dc9fa] transition-colors text-xs">{displayName(p.identity)}</span>
                           {isRemoteMuted && <span className="text-[10px] text-red-400">Mikrofon Kapalı</span>}
                         </div>
                       </div>
@@ -546,15 +562,12 @@ const baseStyles = `
     border-radius: 22px;
     border: 1.5px solid rgba(160, 160, 255, 0.12);
   }
-  .fade-in { opacity: 0; transform: translateY(20px) scale(0.98); animation: fadeInUp 0.8s forwards; }
-  .fade-in-1 { animation-delay: 0.15s; }
-  .fade-in-2 { animation-delay: 0.3s; }
-  .fade-in-3 { animation-delay: 0.45s; }
-  @keyframes fadeInUp { to { opacity: 1; transform: translateY(0) scale(1); } }
-  .logo-emoji { animation: popIn 0.9s cubic-bezier(.21,1.5,.39,1) both; filter: drop-shadow(0 2px 24px #2ec8fa55); }
-  @keyframes popIn { 0% { opacity: 0; transform: scale(0.7) rotate(-22deg); } 80% { opacity: 1; transform: scale(1.08) rotate(5deg);} 100% { opacity: 1; transform: scale(1) rotate(0);} }
+  /* Animasyonlar kaldırıldı — sade görünüm */
+  .fade-in { opacity: 1; }
+  .fade-in-1, .fade-in-2, .fade-in-3 {}
+  .logo-emoji { filter: drop-shadow(0 2px 24px #2ec8fa55); }
   .main-title { font-size: 2.5rem; font-weight: 600; letter-spacing: -0.04em; line-height: 1.13; }
-  .btn-shine { border: 2px solid transparent; background: linear-gradient(#161828, #161828) padding-box, linear-gradient(90deg, #6a7bfd, #2ec8fa 80%) border-box; border-radius: 12px; transition: background 0.24s, box-shadow 0.24s; }
+  .btn-shine { border: 2px solid transparent; background: linear-gradient(#161828, #161828) padding-box, linear-gradient(90deg, #6a7bfd, #2ec8fa 80%) border-box; border-radius: 12px; transition: background 0.2s, box-shadow 0.2s; }
   .btn-shine:hover { background: linear-gradient(90deg,#556bff 20%,#2ec8fa 90%); box-shadow: 0 4px 24px 0 #3c5ddf44; color: #fff; }
   .btn-shine:disabled { opacity: 0.5; cursor: not-allowed; }
   .input-glow:focus { box-shadow: 0 0 0 2.5px #8fa7ff80, 0 0 8px 0 #2ec8fa55; border-color: #6a7bfd; outline: none; background: rgba(34,38,64,0.98); }

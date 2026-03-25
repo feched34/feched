@@ -268,8 +268,17 @@ export class VoiceChatService {
   }
 
   async setMicrophoneEnabled(enabled: boolean): Promise<void> {
+    // Hem LocalParticipant (LiveKit signaling) hem track düzeyinde mute/unmute
     if (this.localParticipant) {
       await this.localParticipant.setMicrophoneEnabled(enabled);
+    }
+    // audioTrack üzerinden de doğrudan kontrol et (PTT için kritik)
+    if (this.audioTrack) {
+      if (enabled) {
+        await this.audioTrack.unmute();
+      } else {
+        await this.audioTrack.mute();
+      }
     }
   }
 
@@ -333,6 +342,10 @@ export class VoiceChatService {
   }
 
   isMuted(): boolean {
+    // audioTrack varsa onun durumuna bak, yoksa localParticipant'a bak
+    if (this.audioTrack) {
+      return this.audioTrack.isMuted;
+    }
     return this.localParticipant?.isMicrophoneEnabled === false;
   }
 
