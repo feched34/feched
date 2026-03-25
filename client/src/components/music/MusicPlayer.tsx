@@ -499,10 +499,33 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
     setQueue(newQueue);
     
     let newCurrentSong = currentSong;
+    let newIsPlaying = isPlaying;
+
     if (currentSong?.id === id) {
       const nextSongInQueue = newQueue.find(s => s.queue_position > songToRemove.queue_position);
       newCurrentSong = nextSongInQueue || newQueue[0] || null;
       setCurrentSong(newCurrentSong);
+      
+      if (!newCurrentSong) {
+        newIsPlaying = false;
+        setIsPlaying(false);
+        if (ytPlayer.current && isReady) {
+          ytPlayer.current.stopVideo();
+        }
+        if (roomId && userId) {
+          sendPauseCommand(0);
+          sendVideoStateUpdate({
+            isPlaying: false,
+            currentVideoId: '',
+            currentTime: 0,
+            duration: 0,
+            lastUpdate: Date.now()
+          });
+        }
+      } else if (roomId && userId) {
+        const videoIdToPlay = newCurrentSong.video_id || newCurrentSong.id;
+        sendPlayCommand(videoIdToPlay);
+      }
     }
 
     // State güncellemesi gönder - sadece önemli değişikliklerde
@@ -510,12 +533,12 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
       sendStateUpdate({
         queue: newQueue,
         currentSong: newCurrentSong,
-        isPlaying,
+        isPlaying: newIsPlaying,
         repeatMode,
         isShuffled
       });
     }
-  }, [queue, currentSong, roomId, userId, sendStateUpdate, isPlaying, repeatMode, isShuffled]);
+  }, [queue, currentSong, roomId, userId, sendStateUpdate, isPlaying, repeatMode, isShuffled, isReady, sendPauseCommand, sendPlayCommand, sendVideoStateUpdate]);
 
   // YouTube arama - useCallback ile optimize et
   const searchYouTube = useCallback(async (query: string) => {
