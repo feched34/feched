@@ -11,7 +11,7 @@ import {
   Track,
   RemoteAudioTrack,
 } from 'livekit-client';
-import { KrispNoiseFilter } from '@livekit/krisp-noise-filter';
+import { KrispNoiseFilter, isKrispNoiseFilterSupported } from '@livekit/krisp-noise-filter';
 
 export interface VoiceChatOptions {
   token: string;
@@ -38,6 +38,17 @@ export class VoiceChatService {
     this.room = new Room({
       adaptiveStream: true,
       dynacast: true,
+      audioCaptureDefaults: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 48000,
+        channelCount: 1,
+      },
+      publishDefaults: {
+        dtx: true,      // sessizlikte bandwidth tasarrufu
+        red: true,      // paket kaybında ses kalitesi
+      },
       reconnectPolicy: {
         nextRetryDelayInMs: (context) => {
           // Exponential backoff: 1s, 2s, 4s, 8s, max 10s
@@ -196,8 +207,18 @@ export class VoiceChatService {
 
       this.audioTrack = await createLocalAudioTrack(trackOptions);
 
-      // TEST 1: Only using Native Browser WebRTC Audio Processing. 
-      // Krisp AI Filter is temporarily removed to prevent conflict.
+      // Krisp'i track'e uygula (pipeline değil, doğrudan track processor olarak)
+      if (isKrispNoiseFilterSupported()) {
+        try {
+          const krispProcessor = KrispNoiseFilter();
+          await this.audioTrack.setProcessor(krispProcessor);
+          console.log('✅ Krisp aktif');
+        } catch (krispError) {
+          console.warn('⚠️ Krisp yüklenemedi, browser filtrelerine devam:', krispError);
+        }
+      } else {
+        console.warn('⚠️ Krisp bu tarayıcıda desteklenmiyor');
+      }
       
       await this.localParticipant.publishTrack(this.audioTrack);
     } catch (error) {
@@ -209,6 +230,8 @@ export class VoiceChatService {
   async switchAudioDevice(deviceId: string): Promise<void> {
     // Clean up existing audio pipeline
     if (this.audioTrack) {
+      // Processor'ı temizle
+      await this.audioTrack.setProcessor(null as any).catch(() => {});
       this.audioTrack.stop();
       if (this.localParticipant) {
         await this.localParticipant.unpublishTrack(this.audioTrack);
