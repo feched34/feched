@@ -196,14 +196,9 @@ export class VoiceChatService {
 
       this.audioTrack = await createLocalAudioTrack(trackOptions);
 
-      // Apply Krisp Noise Filter explicitly
-      try {
-        await this.audioTrack.setProcessor(KrispNoiseFilter());
-        console.log("Krisp AI noise filter applied successfully.");
-      } catch (e) {
-        console.warn("Failed to apply Krisp AI noise filter, falling back to browser native:", e);
-      }
-
+      // TEST 1: Only using Native Browser WebRTC Audio Processing. 
+      // Krisp AI Filter is temporarily removed to prevent conflict.
+      
       await this.localParticipant.publishTrack(this.audioTrack);
     } catch (error) {
       console.error('Failed to publish audio:', error);
