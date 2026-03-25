@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => ({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
-          livekit: ['livekit-client'],
+          livekit: ['livekit-client', '@livekit/krisp-noise-filter'],
           ui: ['@radix-ui/react-toast', '@radix-ui/react-tooltip'],
           particles: ['tsparticles', '@tsparticles/react'],
         },
@@ -56,6 +56,7 @@ export default defineConfig(({ mode }) => ({
       'react',
       'react-dom',
       'livekit-client',
+      '@livekit/krisp-noise-filter',
       '@tsparticles/react',
       'tsparticles',
     ],

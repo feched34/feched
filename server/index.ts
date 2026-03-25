@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -42,6 +43,26 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Rate limiters
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 dakika
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Çok fazla istek, lütfen bir dakika bekle.' },
+});
+
+const youtubeLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 dakika
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Çok fazla arama isteği, lütfen bekle.' },
+});
+
+app.use('/api/auth', authLimiter);
+app.use('/api/youtube/search', youtubeLimiter);
 
 app.use((req, res, next) => {
   const start = Date.now();

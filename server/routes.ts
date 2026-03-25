@@ -7,6 +7,7 @@ import { AccessToken } from "livekit-server-sdk";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import rateLimit from "express-rate-limit";
 
 interface ExtendedWebSocket extends WebSocket {
   roomId?: string;
@@ -190,11 +191,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Nickname and room name are required" });
       }
 
-      // Create access token
-      console.log(`Creating token for user: ${nickname}, room: ${roomName}`);
+      const timestamp = Date.now();
       const token = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-        identity: nickname,
-        ttl: '1h',
+        identity: `${nickname}_${timestamp}`,
+        ttl: '4h',
       });
 
       token.addGrant({
@@ -206,7 +206,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const jwt = await token.toJwt();
-      console.log(`Generated token for ${nickname}: ${jwt.substring(0, 50)}...`);
+      console.log(`Generated token for ${nickname} (identity: ${nickname}_${timestamp}): ${jwt.substring(0, 50)}...`);
 
       // Add participant to storage
       await storage.createParticipant({
@@ -677,7 +677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mediaUrl
       });
 
-      // SSE ile mesajı yayınla
+      // WebSocket üzerinden broadcast et (SSE değil — çift gönderimi engelle)
       const chatMessage = {
         id: 'm' + message.id,
         user: {
@@ -690,14 +690,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: message.messageType as 'text' | 'image' | 'video',
         mediaUrl: message.mediaUrl
       };
-      
-      // SSE ile broadcast et
-      broadcastToSSE(roomId, {
-        type: 'chat_message',
-        message: chatMessage
+      wss.clients.forEach((client: any) => {
+        if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
+          client.send(JSON.stringify({ type: 'chat_message', message: chatMessage }));
+        }
       });
       
-      console.log('💬 Broadcasted chat message to SSE clients in room:', roomId);
+      console.log('💬 Broadcasted chat message via WebSocket to room:', roomId);
 
       res.json({ success: true, message });
     } catch (error) {
@@ -888,6 +887,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         if (data.type === 'join_room') {
+          // #4 Güvenlik: roomId yoksa bağlantıyı reddet
+          if (!data.roomId || typeof data.roomId !== 'string' || data.roomId.trim() === '') {
+            console.warn('🚫 WS join_room: geçersiz roomId, bağlantı kapatıldı');
+            ws.close(1008, 'Geçersiz roomId');
+            return;
+          }
           ws.roomId = data.roomId;
           console.log('🎯 Client joined room via message:', data.roomId);
           
@@ -1078,23 +1083,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (activeConnections > 0 || terminatedConnections > 0) {
       console.log(`🎯 WebSocket stats - Active: ${activeConnections}, Terminated: ${terminatedConnections}`);
     }
-  }, 60000); // 60 saniyede bir ping - daha az sıklıkta
+  }, 30000); // 30 saniyede bir ping
 
   // Cleanup on server close
   wss.on('close', () => {
     clearInterval(heartbeatInterval);
   });
 
-  // Broadcast participant updates to WebSocket clients
-  function broadcastParticipantUpdate(roomId: string) {
+  // Broadcast participant updates to WebSocket clients — tek DB sorgusu (N+1 fix)
+  async function broadcastParticipantUpdate(roomId: string) {
+    const participants = await storage.getParticipantsByRoom(roomId); // 1 sorgu
     wss.clients.forEach((client: ExtendedWebSocket) => {
       if (client.readyState === WebSocket.OPEN && client.roomId === roomId) {
-        storage.getParticipantsByRoom(roomId).then(participants => {
-          client.send(JSON.stringify({
-            type: 'participants_update',
-            participants
-          }));
-        });
+        client.send(JSON.stringify({
+          type: 'participants_update',
+          participants
+        }));
       }
     });
   }
