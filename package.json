@@ -4,14 +4,19 @@
   "description": "Modern sesli sohbet ve senkronize müzik çalar uygulaması",
   "type": "module",
   "license": "MIT",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build:electron": "esbuild electron/main.ts electron/preload.ts --platform=node --packages=external --bundle=false --format=esm --outdir=dist-electron",
     "start": "node dist/index.js",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "electron:dev": "npm run build && npm run build:electron && electron .",
+    "electron:build": "npm run build && npm run build:electron && electron-builder",
+    "electron:preview": "npm run electron:dev"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -118,11 +123,61 @@
     "@types/react-color": "^3.0.13",
     "@types/react-dom": "^18.3.1",
     "@types/ws": "^8.5.13",
+    "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.30.4",
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1",
     "rollup": "^3.29.4",
     "tsx": "^4.19.1",
     "typescript": "5.6.3"
+  },
+  "build": {
+    "appId": "com.goccord.app",
+    "productName": "Goccord",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**",
+      "dist/**",
+      "node_modules/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".",
+        "to": "app",
+        "filter": [
+          "dist/**",
+          "node_modules/**",
+          "package.json",
+          ".env"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "client/public/logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "client/public/logo.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "client/public/logo.png"
+    },
+    "asar": true
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"

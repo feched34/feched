@@ -107,3 +107,7 @@ Thumbs.db
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Electron build outputs
+dist-electron/
+release/
