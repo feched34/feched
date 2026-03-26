@@ -616,10 +616,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         if (data.type === 'music_state_update' && ws.roomId) {
-          roomMusicState[ws.roomId] = data.state;
+          // Queue dahil tüm state'i merge ederek sakla (yeni katılan kullanıcılar için)
+          const musicRoomKey = ws.roomId;
+          roomMusicState[musicRoomKey] = {
+            ...roomMusicState[musicRoomKey],
+            ...data.state,
+            queue: data.state.queue || roomMusicState[musicRoomKey]?.queue || [],
+          };
           wss.clients.forEach((client: ExtendedWebSocket) => {
-            if (client.readyState === WebSocket.OPEN && client.roomId === ws.roomId)
-              client.send(JSON.stringify({ type: 'music_state_broadcast', state: data.state }));
+            if (client.readyState === WebSocket.OPEN && client.roomId === musicRoomKey)
+              client.send(JSON.stringify({ type: 'music_state_broadcast', state: roomMusicState[musicRoomKey] }));
           });
         }
 

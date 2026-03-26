@@ -98,32 +98,32 @@ const MusicPlayer: React.FC<MusicPlayerProps> = memo(({ currentUser, isMuted = f
         }
       }
     },
-    onAddToQueue: (song, userId) => {
-      console.log(`Remote add to queue from ${userId}:`, song);
+    onAddToQueue: (song, senderId) => {
+      console.log(`Remote add to queue from ${senderId}:`, song);
       // Kendi gönderdiğimiz mesajları işleme
-      if (userId === (userId || 'anonymous')) return;
+      if (senderId === (userId || 'anonymous')) return;
       addSong(song);
       toast({
         title: "Şarkı eklendi",
-        description: `${song.title} - ${userId} tarafından eklendi`,
+        description: `${song.title} - ${senderId} tarafından eklendi`,
       });
     },
-    onShuffle: (isShuffled, userId) => {
-      console.log(`Remote shuffle command from ${userId}:`, isShuffled);
+    onShuffle: (isShuffled, senderId) => {
+      console.log(`Remote shuffle command from ${senderId}:`, isShuffled);
       // Kendi gönderdiğimiz mesajları işleme
-      if (userId === (userId || 'anonymous')) return;
+      if (senderId === (userId || 'anonymous')) return;
       setIsShuffled(isShuffled);
     },
-    onRepeat: (repeatMode, userId) => {
-      console.log(`Remote repeat command from ${userId}:`, repeatMode);
+    onRepeat: (repeatMode, senderId) => {
+      console.log(`Remote repeat command from ${senderId}:`, repeatMode);
       // Kendi gönderdiğimiz mesajları işleme
-      if (userId === (userId || 'anonymous')) return;
+      if (senderId === (userId || 'anonymous')) return;
       setRepeatMode(repeatMode as 'none' | 'all' | 'one');
     },
     onStateUpdate: (state) => {
       console.log('Received music state update:', state);
-      // State'i güncelle - sadece gerçekten değişiklik varsa
-      if (state.queue && JSON.stringify(state.queue) !== JSON.stringify(queue)) {
+      // State'i güncelle — queue geliyorsa her zaman uygula (yeni katılan kullanıcılar için)
+      if (state.queue && state.queue.length > 0) {
         setQueue(state.queue);
       }
       if (state.currentSong && (!currentSong || state.currentSong.id !== currentSong.id)) {

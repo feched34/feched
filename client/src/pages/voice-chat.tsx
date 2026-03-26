@@ -186,7 +186,7 @@ export default function VoiceChat() {
   );
 
   const musicPlayerUser = useMemo(() => 
-    localParticipant ? { full_name: localParticipant.identity } : null, 
+    localParticipant ? { full_name: displayName(localParticipant.identity) } : null, 
     [localParticipant?.identity]
   );
 
