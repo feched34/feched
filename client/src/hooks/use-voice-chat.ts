@@ -258,12 +258,32 @@ export function useVoiceChat({ nickname, roomName = 'default-room' }: UseVoiceCh
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
+    // Pencere odağı kaybedince PTT'yi otomatik bırak
+    // (tarayıcı dışındayken keyup event'i gelmez, mikrofon takılı kalabilir)
+    const releasePTT = async () => {
+      if (isPTTKeyDownRef.current) {
+        isPTTKeyDownRef.current = false;
+        if (voiceChatRef.current) {
+          await voiceChatRef.current.setMicrophoneEnabled(false);
+          setState(prev => ({ ...prev, isMuted: true, isPTTActive: false }));
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('keyup', handleKeyUp, true);
+    
+    // Pencere odağı kaybı — alt+tab, başka uygulama vb.
+    window.addEventListener('blur', releasePTT);
+    // Sekme gizlenince (minimize, sekme değiştirme)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') releasePTT();
+    });
 
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('keyup', handleKeyUp);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('keyup', handleKeyUp, true);
+      window.removeEventListener('blur', releasePTT);
     };
   }, [state.pttEnabled, state.isConnected]);
 
