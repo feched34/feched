@@ -318,6 +318,15 @@ export default function VoiceChat() {
             <div className="hidden sm:block">
               <h1 className="text-xl font-bold text-[#e5eaff] tracking-tight select-none">Goccord</h1>
             </div>
+            {/* Sunucular butonu — sol tarafa taşındı */}
+            <button 
+              onClick={() => setShowServerPanel(!showServerPanel)} 
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#6a7bfd22] to-[#2ec8fa22] border border-[#6a7bfd44] hover:border-[#4dc9fa] text-[#e5eaff] hover:text-[#4dc9fa] transition-all duration-300 rounded-lg text-xs font-medium"
+            >
+              <Server size={14} />
+              <span className="hidden sm:inline">Sunucular</span>
+              <ChevronDown size={12} className="text-[#7c8dbb]" />
+            </button>
             <div className="flex items-center gap-2">
               <div className="flex items-center px-2 sm:px-3 py-1 bg-[#2ec8fa22] text-[#2ec8fa] rounded-full text-xs font-medium border border-[#2ec8fa33]">
                 <div className="w-1.5 h-1.5 bg-green-400 rounded-full mr-1.5 animate-pulse"></div>
@@ -335,14 +344,6 @@ export default function VoiceChat() {
             <span className="hidden sm:block text-[#aab7e7] text-sm">
               <span className="font-semibold text-[#eac073]">{nickname}</span>
             </span>
-            <button 
-              onClick={() => setShowServerPanel(!showServerPanel)} 
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#6a7bfd22] to-[#2ec8fa22] border border-[#6a7bfd44] hover:border-[#4dc9fa] text-[#e5eaff] hover:text-[#4dc9fa] transition-all duration-300 rounded-lg text-xs font-medium"
-            >
-              <Server size={14} />
-              <span className="hidden sm:inline">Sunucular</span>
-              <ChevronDown size={12} className="text-[#7c8dbb]" />
-            </button>
             <button onClick={handleLeaveRoom} className="text-[#eac073] hover:text-[#ffb300] transition-all duration-300 p-2 hover:bg-[#eac07322] rounded-lg" title="Odadan çık">
               <LogOut size={18} />
             </button>
@@ -353,7 +354,7 @@ export default function VoiceChat() {
         {showServerPanel && (
           <>
             <div className="fixed inset-0 z-40 bg-black/50" onClick={() => setShowServerPanel(false)} />
-            <div className="fixed right-0 top-0 bottom-0 z-50 w-72 bg-[#101320] border-l border-[#23253a] shadow-2xl flex flex-col animate-slideIn">
+            <div className="fixed left-0 top-0 bottom-0 z-50 w-72 bg-[#101320] border-r border-[#23253a] shadow-2xl flex flex-col animate-slideIn">
               <div className="flex items-center justify-between p-4 border-b border-[#23253a]">
                 <h3 className="text-sm font-semibold text-[#e5eaff] flex items-center gap-2"><Server size={14} /> Sunucularım</h3>
                 <button onClick={() => setShowServerPanel(false)} className="text-[#7c8dbb] hover:text-[#e5eaff] transition-colors"><X size={18} /></button>

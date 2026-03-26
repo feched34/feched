@@ -288,7 +288,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let lastError: any = null;
       for (const instance of invidiousInstances) {
         try {
-          const url = `${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video&sort_by=relevance`;
+          const url = `${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video&sort_by=views`;
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 8000);
           const response = await fetch(url, { signal: controller.signal, headers: { 'Accept': 'application/json' } });

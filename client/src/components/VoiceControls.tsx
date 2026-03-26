@@ -206,7 +206,7 @@ const VoiceControls: React.FC<VoiceControlsProps> = memo(({
               <TooltipTrigger asChild>
                 <button
                   onClick={handlePTTButtonClick}
-                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 select-none border ${
+                  className={`relative flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium tracking-wide transition-all duration-200 select-none border ${
                     pttEnabled
                       ? isPTTActive
                         // Tuşa basılıyken: parlak yeşil, canlı
@@ -246,29 +246,6 @@ const VoiceControls: React.FC<VoiceControlsProps> = memo(({
             </Tooltip>
           )}
 
-          {/* Ping */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-1 px-1.5 py-1 rounded-lg bg-[#0f1422aa] border border-[#4dc9fa22] ml-0.5">
-                {isConnected ? (
-                  <>
-                    <Wifi className="h-3 w-3 text-[#4dc9fa]" />
-                    <span className={`text-[10px] font-mono ${getPingColor(ping || 0)}`}>
-                      {ping ? `${ping}ms` : '...'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <WifiOff className="h-3 w-3 text-red-400" />
-                    <span className="text-[10px] text-red-400">Yok</span>
-                  </>
-                )}
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="bg-[#101320] text-[#e5eaff] border-[#23253a]">
-              <p>Sunucu Gecikmesi</p>
-            </TooltipContent>
-          </Tooltip>
         </div>
 
         {/* ── PTT Tuş Atama Paneli ── */}
