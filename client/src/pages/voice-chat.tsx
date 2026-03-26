@@ -574,7 +574,7 @@ const baseStyles = `
 
 const chatStyles = `
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  @keyframes slideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
   .animate-slideIn { animation: slideIn 0.3s ease-out; }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   .animate-fadeUp { animation: fadeUp 0.15s ease-out; }
