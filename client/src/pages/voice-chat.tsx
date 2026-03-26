@@ -194,8 +194,7 @@ export default function VoiceChat() {
   if (currentScreen === 'returning' && savedUser) {
     return (
       <>
-        <div style={{position:'fixed', inset:0, zIndex:0, background:'#141628'}} />
-        {particlesComponent}
+        <div style={{position:'fixed', inset:0, zIndex:0, background:'linear-gradient(135deg, #0d0f1e 0%, #111425 40%, #141930 70%, #0f1220 100%)'}} />
         <div className="min-h-screen flex items-center justify-center p-4 relative z-10">
           <main className="glass max-w-md w-full flex flex-col relative border-[#23253a] border p-8 shadow-2xl items-center" style={{background:'#101320', borderRadius: '22px'}}>
             <div className="fade-in fade-in-1 flex w-24 h-24 border-[#23305b33] logo-emoji bg-gradient-to-tr from-[#eac073aa] to-[#4dc9fa88] border rounded-full mb-5 items-center justify-center overflow-hidden">
@@ -261,8 +260,7 @@ export default function VoiceChat() {
   if (currentScreen === 'join') {
     return (
       <>
-        <div style={{position:'fixed', inset:0, zIndex:0, background:'#141628'}} />
-        {particlesComponent}
+        <div style={{position:'fixed', inset:0, zIndex:0, background:'linear-gradient(135deg, #0d0f1e 0%, #111425 40%, #141930 70%, #0f1220 100%)'}} />
         <div className="min-h-screen flex items-center justify-center p-4 relative z-10">
           <main className="glass max-w-md w-full flex flex-col relative border-[#23253a] border p-8 shadow-2xl items-center" style={{background:'#101320', borderRadius: '22px'}}>
             <div className="fade-in fade-in-1 flex w-32 h-32 border-[#23305b33] logo-emoji bg-gradient-to-tr from-[#eac073aa] to-[#4dc9fa88] border rounded-full mb-7 items-center justify-center overflow-hidden">
@@ -309,8 +307,7 @@ export default function VoiceChat() {
   // ========== SOHBET EKRANI ==========
   return (
     <>
-      <div style={{position:'fixed', inset:0, zIndex:0, background:'#141628'}} />
-      {particlesComponent}
+      <div style={{position:'fixed', inset:0, zIndex:0, background:'linear-gradient(135deg, #0d0f1e 0%, #111425 40%, #141930 70%, #0f1220 100%)'}} />
       <div className="min-h-screen flex flex-col relative z-10">
         {/* Header */}
         <header className="glass-header flex items-center justify-between px-4 sm:px-8 py-3 border-b border-[#23253a] shadow-lg" style={{background:'rgba(16,19,32,0.95)', backdropFilter: 'blur(18px)'}}>
